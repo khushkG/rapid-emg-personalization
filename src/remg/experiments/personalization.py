@@ -1,0 +1,186 @@
+"""The main experiment: does rapid personalization beat the alternatives?
+
+One run produces a tidy table with one row per
+(seed, subject, shots, condition, evaluation) so every figure in the writeup is a
+group-by on the same file and no number is computed twice in two places.
+
+The protocol, stated once:
+
+  * The encoder is pretrained on the source cohort only. A target subject
+    contributes nothing to pretraining.
+  * Each target subject is calibrated on `shots` repetitions and evaluated on the
+    repetitions calibration never touched.
+  * Every condition receives byte-identical calibration windows and is evaluated
+    on byte-identical test windows.
+  * Normalization statistics come from the calibration windows alone, so the
+    no-personalization baseline is not handicapped by scaling it was denied.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from ..data import fit_normalizer
+from ..data.normalize import normalize_per_subject
+from ..data.splits import calibration_split, subjects
+from ..data.windows import WindowSet
+from ..evaluate.metrics import rejection_curve, score
+from ..evaluate.robustness import channel_failure_sweep
+from ..train.adapt import CONDITIONS, AdaptConfig, adapt
+from ..train.pretrain import PretrainConfig, pretrain
+from ..utils import pick_device
+
+
+@dataclass
+class ExperimentConfig:
+    shots: tuple[int, ...] = (1, 2, 3)
+    conditions: tuple[str, ...] = CONDITIONS
+    norm_mode: str = "calib"
+    seeds: tuple[int, ...] = (0,)
+    # Sensor-failure sweep. Only run at the largest shot count by default -- it
+    # multiplies evaluation cost by the number of electrode combinations.
+    failure_counts: tuple[int, ...] = (1, 2)
+    failure_kind: str = "drop"
+    failure_max_combinations: int = 12
+    failures_at_max_shots_only: bool = True
+    rejection: bool = True
+    pretrain: PretrainConfig = field(default_factory=PretrainConfig)
+    adapt: AdaptConfig = field(default_factory=AdaptConfig)
+    device: str | None = None
+
+
+def run(
+    source: WindowSet,
+    target: WindowSet,
+    cfg: ExperimentConfig | None = None,
+    verbose: bool = True,
+) -> tuple[list[dict], list[dict]]:
+    """Run the full leave-one-subject-out personalization experiment.
+
+    `source` is the pretraining cohort (e.g. intact DB2 subjects); `target` is the
+    evaluation cohort (e.g. DB3 amputees). They must be disjoint sets of people --
+    pass the same window set twice only for a within-cohort sanity check, and
+    note that doing so makes the source subjects their own test subjects.
+    """
+    cfg = cfg or ExperimentConfig()
+    device = pick_device(cfg.device)
+    rows: list[dict] = []
+    curves: list[dict] = []
+
+    source_n = normalize_per_subject(source)
+
+    for seed in cfg.seeds:
+        if verbose:
+            print(f"[seed {seed}] pretraining on {len(subjects(source))} source subjects "
+                  f"({len(source_n)} windows) on {device}", flush=True)
+        pcfg = PretrainConfig(**{**cfg.pretrain.__dict__, "seed": seed})
+        base, history = pretrain(source_n, val=None, cfg=pcfg, verbose=verbose)
+
+        for subj in subjects(target):
+            for shots in cfg.shots:
+                try:
+                    split = calibration_split(target, subj, shots=shots)
+                except ValueError as exc:
+                    if verbose:
+                        print(f"  skip S{subj} shots={shots}: {exc}", flush=True)
+                    continue
+
+                stats = fit_normalizer(split.calib, cfg.norm_mode)
+                calib_n = stats.apply(split.calib)
+                test_n = stats.apply(split.test)
+
+                for condition in cfg.conditions:
+                    acfg = AdaptConfig(**{**cfg.adapt.__dict__, "seed": seed})
+                    res = adapt(base, calib_n, condition, device, acfg, split.calib_reps)
+
+                    proba = res.predict_proba(test_n, device)
+                    sc = score(test_n.y, proba.argmax(axis=1), test_n.class_names)
+                    base_row = {
+                        "seed": seed,
+                        "subject": subj,
+                        "shots": shots,
+                        "condition": condition,
+                        "evaluation": "clean",
+                        "calib_windows": res.calib_windows,
+                        "calib_reps": ",".join(map(str, res.calib_reps)),
+                        "adapt_seconds": res.seconds,
+                        "updated_params": res.updated_params,
+                        **sc.as_row(),
+                    }
+                    rows.append(base_row)
+                    if verbose:
+                        print(
+                            f"  S{subj:<3} shots={shots} {condition:<13} "
+                            f"bal_acc {sc.balanced_accuracy:.3f}  macroF1 {sc.macro_f1:.3f}  "
+                            f"({res.seconds:.1f}s, {res.updated_params} params)",
+                            flush=True,
+                        )
+
+                    if cfg.rejection:
+                        for r in rejection_curve(test_n.y, proba):
+                            curves.append({**{k: base_row[k] for k in
+                                              ("seed", "subject", "shots", "condition")},
+                                           "curve": "rejection", **r})
+
+                    run_failures = (not cfg.failures_at_max_shots_only) or shots == max(cfg.shots)
+                    if run_failures:
+                        for n_failed in cfg.failure_counts:
+                            vals = []
+                            for combo, degraded in channel_failure_sweep(
+                                test_n,
+                                n_failed,
+                                kind=cfg.failure_kind,
+                                max_combinations=cfg.failure_max_combinations,
+                                seed=seed,
+                            ):
+                                dsc = score(
+                                    degraded.y,
+                                    res.predict(degraded, device),
+                                    degraded.class_names,
+                                )
+                                vals.append((combo, dsc))
+                            if not vals:
+                                continue
+                            bal = np.array([v[1].balanced_accuracy for v in vals])
+                            worst = int(bal.argmin())
+                            rows.append({
+                                **base_row,
+                                "evaluation": f"{cfg.failure_kind}_{n_failed}ch",
+                                "balanced_accuracy": float(bal.mean()),
+                                "balanced_accuracy_worst": float(bal.min()),
+                                "worst_channels": ",".join(map(str, vals[worst][0])),
+                                "macro_f1": float(np.mean([v[1].macro_f1 for v in vals])),
+                                "accuracy": float(np.mean([v[1].accuracy for v in vals])),
+                                "n_combinations": len(vals),
+                            })
+                            if verbose:
+                                print(
+                                    f"      {cfg.failure_kind} {n_failed}ch: "
+                                    f"mean {bal.mean():.3f}  worst {bal.min():.3f} "
+                                    f"(channels {vals[worst][0]})",
+                                    flush=True,
+                                )
+    return rows, curves
+
+
+def to_dataframe(rows: list[dict]):
+    import pandas as pd
+
+    return pd.DataFrame(rows)
+
+
+def headline(rows: list[dict]) -> str:
+    """Compact summary: mean +/- between-subject SD of balanced accuracy."""
+    import pandas as pd
+
+    df = pd.DataFrame(rows)
+    clean = df[df["evaluation"] == "clean"]
+    if clean.empty:
+        return "(no clean-evaluation rows)"
+    g = clean.groupby(["shots", "condition"])["balanced_accuracy"]
+    out = ["shots  condition        bal_acc (mean +/- SD across subjects)"]
+    for (shots, cond), vals in g:
+        out.append(f"{shots:>5}  {cond:<15} {vals.mean():.3f} +/- {vals.std():.3f}  (n={len(vals)})")
+    return "\n".join(out)
