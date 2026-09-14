@@ -24,7 +24,7 @@ import numpy as np
 
 from ..data import fit_normalizer
 from ..data.normalize import normalize_per_subject
-from ..data.splits import calibration_split, subjects
+from ..data.splits import calibration_split, recency_partition, subjects
 from ..data.windows import WindowSet
 from ..evaluate.metrics import rejection_curve, score
 from ..evaluate.robustness import channel_failure_sweep
@@ -46,6 +46,11 @@ class ExperimentConfig:
     failure_max_combinations: int = 12
     failures_at_max_shots_only: bool = True
     rejection: bool = True
+    # Cross-repetition session proxy: additionally score the held-out repetitions
+    # split by how far after calibration they were recorded. Free -- it regroups
+    # predictions already computed -- so it is on by default.
+    recency_split: bool = True
+    recency_bins: int = 2
     pretrain: PretrainConfig = field(default_factory=PretrainConfig)
     adapt: AdaptConfig = field(default_factory=AdaptConfig)
     device: str | None = None
@@ -118,6 +123,27 @@ def run(
                             flush=True,
                         )
 
+                    if cfg.recency_split:
+                        # Same predictions, regrouped by how long after calibration
+                        # each repetition was recorded. A gap between `early` and
+                        # `late` is within-session drift.
+                        for name, mask in recency_partition(
+                            test_n, split.calib_reps, cfg.recency_bins
+                        ):
+                            if not mask.any():
+                                continue
+                            rsc = score(
+                                test_n.y[mask],
+                                proba[mask].argmax(axis=1),
+                                test_n.class_names,
+                            )
+                            rows.append({
+                                **base_row,
+                                "evaluation": f"clean_{name}",
+                                "n_windows": int(mask.sum()),
+                                **rsc.as_row(),
+                            })
+
                     if cfg.rejection:
                         for r in rejection_curve(test_n.y, proba):
                             curves.append({**{k: base_row[k] for k in
@@ -183,4 +209,36 @@ def headline(rows: list[dict]) -> str:
     out = ["shots  condition        bal_acc (mean +/- SD across subjects)"]
     for (shots, cond), vals in g:
         out.append(f"{shots:>5}  {cond:<15} {vals.mean():.3f} +/- {vals.std():.3f}  (n={len(vals)})")
+    return "\n".join(out)
+
+
+def drift_summary(rows: list[dict]) -> str:
+    """The cross-repetition proxy: accuracy near calibration vs far from it.
+
+    A negative `drift` means the model is worse on the repetitions recorded
+    furthest after calibration -- the calibration going stale within a single
+    session. This is a lower bound on the cross-session problem, not an answer
+    to it; the electrodes were never re-donned.
+    """
+    import pandas as pd
+
+    df = pd.DataFrame(rows)
+    if "evaluation" not in df or df.empty:
+        return "(no rows)"
+    early = df[df["evaluation"] == "clean_early"]
+    late = df[df["evaluation"] == "clean_late"]
+    if early.empty or late.empty:
+        return "(no recency rows -- too few held-out repetitions, or recency_split off)"
+
+    keys = ["shots", "condition"]
+    merged = early.merge(late, on=keys + ["seed", "subject"], suffixes=("_early", "_late"))
+    merged["drift"] = merged["balanced_accuracy_late"] - merged["balanced_accuracy_early"]
+
+    out = ["shots  condition        early    late    drift (late - early)"]
+    for (shots, cond), grp in merged.groupby(keys):
+        out.append(
+            f"{shots:>5}  {cond:<15} {grp['balanced_accuracy_early'].mean():.3f}  "
+            f"{grp['balanced_accuracy_late'].mean():.3f}  "
+            f"{grp['drift'].mean():+.3f} +/- {grp['drift'].std():.3f}  (n={len(grp)})"
+        )
     return "\n".join(out)

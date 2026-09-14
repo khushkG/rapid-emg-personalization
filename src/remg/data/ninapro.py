@@ -18,8 +18,12 @@ Three things here are load-bearing and easy to get silently wrong:
    correction. Training on `stimulus` labels the subject's reaction time as
    movement, which costs several points of accuracy for no reason.
 
-2. Labels restart at 1 in every exercise file, so they must be offset before
-   files are concatenated -- see `remg.data.movements`.
+2. Label numbering differs between releases. The DB2/DB3 files served today
+   already carry global ids -- exercise 2 holds 18..40, not 1..23 -- while the
+   commonly-cited description of the format has them restarting at 1 per file.
+   Offsetting an already-global file silently renames every movement in it, so
+   `movements.ensure_global_labels` detects which convention the file uses and
+   the verdict is recorded in `meta["labels_were_global"]`.
 
 3. Channel count is not always 12 in DB3. Several amputees have a shorter stump
    than the electrode array needs, so their recordings carry fewer channels. The
@@ -34,7 +38,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .movements import to_global_label
+from .movements import ensure_global_labels
 from .records import SubjectRecord
 
 # Native sampling rates. DB1 is included for completeness but is not part of the
@@ -98,8 +102,10 @@ def load_file(path: Path, dataset: str) -> SubjectRecord:
     n = min(len(label), len(rep), emg.shape[0])
     emg, label, rep = emg[:n], label[:n], rep[:n]
 
+    labels_were_global = None
     if exercise is not None:
-        label = to_global_label(label, exercise)
+        label, labels_were_global = ensure_global_labels(label, exercise)
+        label = label.astype(np.int16)
 
     return SubjectRecord(
         emg=np.ascontiguousarray(emg),
@@ -109,7 +115,12 @@ def load_file(path: Path, dataset: str) -> SubjectRecord:
         dataset=dataset,
         fs=NATIVE_FS.get(dataset, 2000),
         session=day - 1 if day is not None else 0,
-        meta={"source_file": path.name, "exercise": exercise, "day": day},
+        meta={
+            "source_file": path.name,
+            "exercise": exercise,
+            "day": day,
+            "labels_were_global": labels_were_global,
+        },
     )
 
 
@@ -164,7 +175,13 @@ def load_subject(
         dataset=dataset,
         fs=parts[0].fs,
         session=session,
-        meta={"source_files": [p.meta["source_file"] for p in parts], "n_channels": n_ch},
+        meta={
+            "source_files": [p.meta["source_file"] for p in parts],
+            "n_channels": n_ch,
+            "labels_were_global": {
+                p.meta["source_file"]: p.meta["labels_were_global"] for p in parts
+            },
+        },
     )
 
 

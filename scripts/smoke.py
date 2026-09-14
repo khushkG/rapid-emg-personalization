@@ -13,7 +13,7 @@ import time
 
 from remg.data import PreprocessConfig, WindowConfig, preprocess, segment
 from remg.data.synthetic import make_cohort
-from remg.experiments import ExperimentConfig, headline, run
+from remg.experiments import ExperimentConfig, drift_summary, headline, run
 from remg.train import AdaptConfig, PretrainConfig
 from remg.train.sampler import EpisodeConfig
 
@@ -56,6 +56,8 @@ def main() -> None:
     rows, _ = run(source, target, cfg)
 
     print("\n" + headline(rows))
+    print("\ncross-repetition session proxy (within-session drift):")
+    print(drift_summary(rows))
     print(f"\ntotal {time.time() - t0:.0f}s")
 
 

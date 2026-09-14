@@ -66,21 +66,48 @@ def rejection_curve(
     model is unsure is far better than executing the wrong grasp. This trades
     coverage (fraction of windows acted on) against balanced accuracy on the
     windows that were acted on, which is the operationally meaningful curve.
+
+    One trap, which is why `classes_present` is reported alongside every point:
+    balanced accuracy averages recall over the classes that appear in `y_true`,
+    and raising the threshold removes whole classes from the surviving windows.
+    A curve that climbs at high thresholds may simply be averaging over fewer,
+    easier classes rather than getting better at the same task. Points are
+    comparable to the full-coverage point only while `classes_present` equals
+    the total, so plot the curve truncated where that stops holding, and read
+    anything past it as a different question.
     """
     conf = proba.max(axis=1)
     pred = proba.argmax(axis=1)
+    n_classes = proba.shape[1]
     if thresholds is None:
         thresholds = np.linspace(0.0, 0.95, 20)
     rows = []
     for t in thresholds:
         keep = conf >= t
-        if keep.sum() == 0:
-            rows.append({"threshold": float(t), "coverage": 0.0, "balanced_accuracy": float("nan")})
+        n_kept = int(keep.sum())
+        present = int(len(np.unique(y_true[keep]))) if n_kept else 0
+        if n_kept == 0 or present < 2:
+            # One class left makes balanced accuracy either 1.0 or 0.0 by
+            # construction; reporting it as a number invites reading it as skill.
+            rows.append({
+                "threshold": float(t),
+                "coverage": float(keep.mean()) if len(keep) else 0.0,
+                "n_kept": n_kept,
+                "classes_present": present,
+                "n_classes": n_classes,
+                "comparable": False,
+                "balanced_accuracy": float("nan"),
+                "accuracy": float((y_true[keep] == pred[keep]).mean()) if n_kept else float("nan"),
+            })
             continue
         rows.append(
             {
                 "threshold": float(t),
                 "coverage": float(keep.mean()),
+                "n_kept": n_kept,
+                "classes_present": present,
+                "n_classes": n_classes,
+                "comparable": present == n_classes,
                 "balanced_accuracy": float(balanced_accuracy_score(y_true[keep], pred[keep])),
                 "accuracy": float((y_true[keep] == pred[keep]).mean()),
             }
