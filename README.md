@@ -20,7 +20,7 @@ digital hand.
 | Pretraining with episodic meta-learning | done |
 | Four personalization conditions | done |
 | Metrics, sensor-failure sweep, rejection curves | done |
-| Protocol test suite (70 tests) | passing |
+| Protocol test suite (145 tests) | passing |
 | NinaPro DB2/DB3/DB6 loader | run against real DB2 and DB3 files; label-numbering bug found and fixed |
 | Movement subset | verified against the official movement list (one id was wrong — see Scope notes) |
 | Cross-repetition session proxy | done |
@@ -28,7 +28,7 @@ digital hand.
 | DB3 download | 10 of 11 subjects; cohort coverage verified |
 | DB2 download | subject 1 only (pretraining cohort not yet fetched) |
 | Cross-session experiment (day 1 → day 5) | needs DB6 (see Scope notes) |
-| Digital hand visualisation | not started |
+| Digital hand visualisation | done: `scripts/demo_hand.py` |
 | Real results | blocked on the DB2 pretraining cohort |
 
 Everything runs end-to-end today on synthetic data:
@@ -39,7 +39,7 @@ uv run python scripts/smoke.py     # ~1 minute
 
 Those numbers are plumbing checks, not findings. The data is simulated.
 
-The tests are the other half of that: 55 of them, covering the protocol rules
+The tests are the other half of that: 145 of them, covering the protocol rules
 below and the NinaPro loader against synthetic files written in the real `.mat`
 format (both v5 and v7.3 containers, the per-exercise label restart, and the
 reduced-channel amputee recordings).
@@ -160,6 +160,32 @@ calibration begins the adapted model and the baseline are literally the same
 network — any difference is attributable to adaptation rather than to a different
 architecture.
 
+## The demonstration
+
+```
+uv run python scripts/demo_hand.py --subject 2 --condition rapid
+```
+
+Replays an amputee's recorded EMG from repetitions calibration never touched,
+and animates a hand from what the model decodes -- the one part of this project
+a non-specialist can read directly.
+
+It draws the decoded hand **beside the movement the subject was cued to
+perform**. Showing only the decoded hand would let a fluent animation pass for
+an accurate one; paired, a mistake is visible as a mistake, and the frame title
+turns red when they disagree.
+
+The hand is articulated rather than a set of stock pictures: each finger is a
+three-segment chain driven by a flexion parameter, so a grasp that needs the
+thumb opposed cannot be faked with a nicer drawing, and the pose can be
+interpolated when the prediction changes. Because it is drawn from the back,
+flexion renders as foreshortening -- the sideways sweep that is the obvious
+thing to implement makes every grasp look like the same hand waving.
+
+`test_viz.py` checks all 66 pairs of poses are visually distinct. Two movements
+drawn alike would make a correct prediction unreadable, and no accuracy number
+would catch it.
+
 The backbone is trained with a classification loss and an episodic prototype loss
 *simultaneously*, so one checkpoint serves all four conditions. Training separate
 backbones would confound "this adaptation method is better" with "episodic
@@ -176,7 +202,9 @@ src/remg/
   train/       augmentation, episode sampler, pretraining, the four conditions
   evaluate/    metrics, rejection curves, sensor-failure sweeps
   experiments/ the leave-one-subject-out personalization study
-scripts/       fetch_data.py, inspect_data.py, smoke.py, run_experiment.py
+  viz/         the articulated hand the demonstration animates
+scripts/       fetch_data.py, inspect_data.py, smoke.py, run_experiment.py,
+               demo_hand.py
 tests/         protocol guards, loader tests, synthetic .mat fixtures
 ```
 
