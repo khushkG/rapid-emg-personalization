@@ -96,6 +96,13 @@ def main() -> None:
     ap.add_argument("--include-excluded", action="store_true",
                     help="ignore the documented exclusions in remg.data.cohort and keep "
                          "every subject (for checking what an exclusion cost)")
+    ap.add_argument("--no-failures", action="store_true",
+                    help="skip the sensor-failure sweep (it dominates runtime)")
+    ap.add_argument("--no-rejection", action="store_true",
+                    help="skip the rejection curves")
+    ap.add_argument("--unbalanced-calibration", action="store_true",
+                    help="train the gradient baselines on unbalanced calibration windows "
+                         "(the old, unfair behaviour -- for measuring what balancing changed)")
     ap.add_argument("--tag", default="run", help="prefix for the output files")
     ap.add_argument("--out", type=Path, default=Path("results"))
     args = ap.parse_args()
@@ -142,7 +149,9 @@ def main() -> None:
         shots=tuple(args.shots),
         seeds=tuple(args.seeds),
         pretrain=PretrainConfig(steps=args.steps),
-        adapt=AdaptConfig(),
+        adapt=AdaptConfig(class_balanced=not args.unbalanced_calibration),
+        failure_counts=() if args.no_failures else (1, 2),
+        rejection=not args.no_rejection,
     )
 
     t0 = time.time()
@@ -167,6 +176,7 @@ def main() -> None:
         "movement_ids": sorted(DEFAULT_SUBSET),
         "shots": args.shots, "seeds": args.seeds, "pretrain_steps": args.steps,
         "preprocess": {"notch_hz": pcfg.notch_hz, "target_fs": pcfg.target_fs},
+        "calibration_class_balanced": cfg.adapt.class_balanced,
         "window": {"length_ms": wcfg.length_ms, "stride_ms": wcfg.stride_ms},
         "elapsed_seconds": round(elapsed, 1),
     }

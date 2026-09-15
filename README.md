@@ -29,7 +29,7 @@ digital hand.
 | DB2 download | subject 1 only (pretraining cohort not yet fetched) |
 | Cross-session experiment (day 1 → day 5) | needs DB6 (see Scope notes) |
 | Digital hand visualisation | done: `scripts/demo_hand.py` |
-| Real results | blocked on the DB2 pretraining cohort |
+| Real results | first study run; **the proposed method does not beat the baselines** (see Results) |
 
 Everything runs end-to-end today on synthetic data:
 
@@ -44,13 +44,108 @@ below and the NinaPro loader against synthetic files written in the real `.mat`
 format (both v5 and v7.3 containers, the per-exercise label restart, and the
 reduced-channel amputee recordings).
 
+## Results so far
+
+First leave-one-subject-out study: 7 DB2 subjects pretraining, 9 DB3 amputees
+evaluated, 2000 steps, seed 0. Balanced accuracy over 12 classes; chance is
+0.083.
+
+| shots | `none` | `linear_probe` | `finetune` | `rapid` |
+| --- | --- | --- | --- | --- |
+| 1 | 0.143 | 0.282 | **0.345** | 0.280 |
+| 2 | 0.140 | 0.295 | **0.378** | 0.306 |
+| 3 | 0.139 | 0.305 | **0.389** | 0.307 |
+
+Paired per subject, at every shot count:
+
+* `rapid` vs `linear_probe`: **no difference** (wins 4-5 of 9, p = 0.65 to 1.0).
+* `rapid` vs `finetune`: **loses in 9 of 9 subjects**, by 0.065 to 0.082.
+* `finetune` vs `linear_probe`: wins 9 of 9, by 0.063 to 0.084.
+* Every adapted condition beats `none` in 9 of 9, by roughly 0.14 to 0.17.
+
+**So the headline claim does not hold.** `rapid` -- FiLM adapters plus prototypes,
+664 parameters -- neither beats the cheap linear-probe baseline nor comes close
+to ordinary full fine-tuning. Personalization itself works, and works well:
+calibrating on one repetition roughly doubles balanced accuracy over the general
+model. What is not supported is that *this* way of personalizing is better.
+
+With n = 9 the smallest p a Wilcoxon signed-rank test can return is 0.0039, so
+"p = 0.0039" here means only "won or lost in every subject" -- the strongest
+statement this cohort size can make, not a small p-value in the usual sense.
+
+### The result that was wrong first
+
+An earlier run showed `rapid` ahead by 0.09, winning 8-9 of 9 subjects,
+p <= 0.008. That was an artifact and it is worth recording how.
+
+`rapid` classifies with per-class prototypes, which weight every class equally
+regardless of how many windows it has. `linear_probe` and `finetune` were
+trained with plain cross-entropy on calibration windows that are ~79% rest, so
+they learned the rest prior and collapsed onto predicting it -- rest recall 0.98,
+plain accuracy 0.72, balanced accuracy 0.21. The proposed method was being
+compared against baselines crippled by an imbalance it is immune to by
+construction.
+
+Pretraining had always sampled class-balanced (`PretrainConfig.class_balanced`);
+adaptation simply did not. One flag (`AdaptConfig.class_balanced`, now on by
+default) closes the gap entirely and lifts every baseline: `finetune` goes from
+0.21 to 0.39. The fair comparison is not merely fairer, it is a better system.
+
+What caught it was the per-class recall table, not the headline metric. A
+balanced-accuracy number alone looked like a clean win.
+
+### What is worth testing next
+
+`rapid` updates 664 parameters against 109,317 for full fine-tuning and is 0.08
+behind. That is not competitive on accuracy, but it is a different claim from
+the one the project started with, and two questions remain open:
+
+* Does the gap hold under **sensor failure**? The failure sweep was disabled for
+  speed in this run. A heavily fine-tuned model may be more brittle to an
+  electrode dropping out.
+* Does it hold **across sessions**, where fine-tuning a whole backbone on one
+  session's electrode placement is exactly the thing that should overfit?
+
+Neither is answered yet. Both are honest questions; neither rescues the original
+claim on its own.
+
+Also outstanding before any of this is quotable: a **seed-variance check** (one
+seed so far, so 0.08 is not yet known to exceed run-to-run noise) and the full
+15-subject DB2 cohort.
+
 ## Setup
 
 ```
 curl -LsSf https://astral.sh/uv/install.sh | sh     # once
 uv sync --group dev
-uv run --group dev pytest -q
 ```
+
+## Checking it works
+
+```
+uv run python scripts/check.py            # ~4 min, needs no data
+uv run python scripts/check.py --quick    # ~3 min, tests only
+uv run python scripts/check.py --full     # also runs a real experiment
+```
+
+Four levels, cheapest first, each answering a different question, so a failure
+says *where* the problem is rather than only that there is one:
+
+| Level | Question | Needs |
+| --- | --- | --- |
+| 1. tests | Is the logic right? | nothing |
+| 2. synthetic | Do the stages connect end to end? | nothing |
+| 3. data | Do the real files match what the loader assumes? | a download |
+| 4. experiment | Does it produce results on real amputee data? | both cohorts |
+
+A green level 1 with a red level 3 means the code is fine and the data is not,
+which is a different morning's work from the reverse. Levels whose inputs are
+missing are reported as skipped rather than failed -- an undownloaded cohort is
+work not yet done, not a broken project.
+
+Level 2 does one thing beyond checking that the code runs: it fails if adapting
+to a subject does not beat not adapting, even on simulated data. Every stage can
+execute cleanly with the adaptation wired to nothing.
 
 Torch runs on the M-series GPU via MPS; `remg.utils.pick_device` selects it
 automatically.
@@ -203,8 +298,8 @@ src/remg/
   evaluate/    metrics, rejection curves, sensor-failure sweeps
   experiments/ the leave-one-subject-out personalization study
   viz/         the articulated hand the demonstration animates
-scripts/       fetch_data.py, inspect_data.py, smoke.py, run_experiment.py,
-               demo_hand.py
+scripts/       check.py, fetch_data.py, inspect_data.py, smoke.py,
+               run_experiment.py, demo_hand.py
 tests/         protocol guards, loader tests, synthetic .mat fixtures
 ```
 

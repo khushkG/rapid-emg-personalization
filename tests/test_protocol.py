@@ -158,6 +158,45 @@ def test_calibration_covers_every_class(ws):
     assert set(np.unique(split.calib.y)) == set(range(ws.n_classes))
 
 
+# --- fairness of the baselines ----------------------------------------------
+#
+# `rapid` classifies by per-class prototypes, so it is prior-free whatever the
+# class balance of the calibration set. The gradient-trained baselines are not.
+# Leaving them to train on calibration windows that are ~79% rest collapses them
+# onto predicting rest, and the resulting gap reads as the adapters working.
+
+def test_calibration_sampling_is_class_balanced_by_default(ws):
+    """The baselines must not be handicapped by a prior `rapid` never sees."""
+    from remg.train.adapt import AdaptConfig, _class_balanced_weights
+
+    assert AdaptConfig().class_balanced is True
+
+    split = calibration_split(ws, subject=1, shots=2)
+    w = _class_balanced_weights(split.calib)
+
+    assert w.sum() == pytest.approx(1.0)
+    mass = np.array([w[split.calib.y == c].sum() for c in range(ws.n_classes)])
+    present = mass > 0
+    assert np.allclose(mass[present], mass[present][0]), "classes do not get equal mass"
+
+
+def test_balanced_sampling_actually_rebalances_a_skewed_calibration_set(ws):
+    """With rest dominant, a balanced draw must not come back mostly rest."""
+    from remg.train.adapt import _batches, _class_balanced_weights
+
+    split = calibration_split(ws, subject=1, shots=2)
+    calib = split.calib
+    rng = np.random.default_rng(0)
+
+    plain = next(_batches(len(calib), 512, 1, rng))
+    balanced = next(_batches(len(calib), 512, 1, rng, _class_balanced_weights(calib)))
+
+    rest_plain = float((calib.y[plain] == 0).mean())
+    rest_balanced = float((calib.y[balanced] == 0).mean())
+    assert rest_balanced < rest_plain, "balancing did not reduce the rest fraction"
+    assert len(np.unique(calib.y[balanced])) >= len(np.unique(calib.y[plain]))
+
+
 # --- cohort exclusions ------------------------------------------------------
 #
 # An exclusion changes who the result is about. These pin the registry so one
