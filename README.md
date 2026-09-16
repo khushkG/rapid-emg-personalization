@@ -44,74 +44,88 @@ below and the NinaPro loader against synthetic files written in the real `.mat`
 format (both v5 and v7.3 containers, the per-exercise label restart, and the
 reduced-channel amputee recordings).
 
-## Results so far
+## Results
 
-First leave-one-subject-out study: 7 DB2 subjects pretraining, 9 DB3 amputees
-evaluated, 2000 steps, seed 0. Balanced accuracy over 12 classes; chance is
-0.083.
+Leave-one-subject-out, 15 DB2 subjects pretraining, 10 DB3 amputees evaluated,
+3000 steps, **3 seeds** (n = 30 subject-seed pairs). Balanced accuracy over 12
+classes; chance is 0.083.
 
-| shots | `none` | `linear_probe` | `finetune` | `rapid` |
+| shots | `none` | `linear_probe` | **`finetune`** | `rapid` |
 | --- | --- | --- | --- | --- |
-| 1 | 0.143 | 0.282 | **0.345** | 0.280 |
-| 2 | 0.140 | 0.295 | **0.378** | 0.306 |
-| 3 | 0.139 | 0.305 | **0.389** | 0.307 |
+| 1 | 0.160 | 0.286 | **0.347** | 0.294 |
+| 2 | 0.161 | 0.312 | **0.379** | 0.320 |
+| 3 | 0.157 | 0.328 | **0.403** | 0.331 |
 
-Paired per subject, at every shot count:
+Paired per (subject, seed), with bootstrap 95% confidence intervals:
 
-* `rapid` vs `linear_probe`: **no difference** (wins 4-5 of 9, p = 0.65 to 1.0).
-* `rapid` vs `finetune`: **loses in 9 of 9 subjects**, by 0.065 to 0.082.
-* `finetune` vs `linear_probe`: wins 9 of 9, by 0.063 to 0.084.
-* Every adapted condition beats `none` in 9 of 9, by roughly 0.14 to 0.17.
+| comparison | shots=3 mean | 95% CI | wins | p |
+| --- | --- | --- | --- | --- |
+| `finetune` - `rapid` | **+0.072** | [+0.054, +0.090] | 28/30 | 6e-08 |
+| `finetune` - `linear_probe` | **+0.075** | [+0.062, +0.089] | 30/30 | 2e-09 |
+| `rapid` - `linear_probe` | +0.003 | [-0.010, +0.021] | 16/30 | 0.98 |
 
-**So the headline claim does not hold.** `rapid` -- FiLM adapters plus prototypes,
-664 parameters -- neither beats the cheap linear-probe baseline nor comes close
-to ordinary full fine-tuning. Personalization itself works, and works well:
-calibrating on one repetition roughly doubles balanced accuracy over the general
-model. What is not supported is that *this* way of personalizing is better.
+**The central hypothesis is not supported.** `rapid` -- FiLM adapters plus
+prototypes, 664 parameters -- is statistically indistinguishable from the cheap
+linear-probe baseline (CI spans zero at every shot count) and loses to ordinary
+full fine-tuning by 0.05 to 0.07, in 24-28 of 30 runs.
 
-With n = 9 the smallest p a Wilcoxon signed-rank test can return is 0.0039, so
-"p = 0.0039" here means only "won or lost in every subject" -- the strongest
-statement this cohort size can make, not a small p-value in the usual sense.
+Seed-to-seed spread of the cohort mean is **0.013**, so the gap to `finetune` is
+four to five times run-to-run noise. This is not a variance artifact.
+
+What *is* supported, clearly: personalization works. One calibration repetition
+takes balanced accuracy from 0.16 to 0.29-0.35 -- roughly double, against a
+general model sitting near twice chance. The question was never whether to
+personalize; it is whether this way is better, and it is not.
+
+### The rescue hypothesis, tested and rejected
+
+`rapid` depends on episodic meta-learning, whose episodes are sampled across
+source subjects, so the obvious objection to an earlier 7-subject run was that
+the episodic objective had too little subject diversity to work with. Doubling
+the pretraining cohort to 15 does not rescue it:
+
+| | 7 subjects | 15 subjects | gain |
+| --- | --- | --- | --- |
+| `rapid` | 0.307 | 0.331 | +0.024 |
+| `linear_probe` | 0.305 | 0.328 | +0.023 |
+| `finetune` | 0.389 | 0.403 | +0.014 |
+
+More pretraining data helps everything, and helps `rapid` no more than it helps
+a linear probe. The gap to `finetune` widened slightly rather than closing.
 
 ### The result that was wrong first
 
-An earlier run showed `rapid` ahead by 0.09, winning 8-9 of 9 subjects,
-p <= 0.008. That was an artifact and it is worth recording how.
+An earlier run had `rapid` ahead by 0.09, winning 8-9 of 9 subjects. That was an
+artifact, and how it happened is worth recording.
 
 `rapid` classifies with per-class prototypes, which weight every class equally
-regardless of how many windows it has. `linear_probe` and `finetune` were
-trained with plain cross-entropy on calibration windows that are ~79% rest, so
-they learned the rest prior and collapsed onto predicting it -- rest recall 0.98,
-plain accuracy 0.72, balanced accuracy 0.21. The proposed method was being
-compared against baselines crippled by an imbalance it is immune to by
-construction.
+however many windows it has. `linear_probe` and `finetune` trained with plain
+cross-entropy on calibration windows that are ~79% rest, so they learned the
+rest prior and collapsed onto predicting it -- rest recall 0.98, plain accuracy
+0.72, balanced accuracy 0.21. The proposed method was being measured against
+baselines crippled by an imbalance it is immune to by construction.
 
-Pretraining had always sampled class-balanced (`PretrainConfig.class_balanced`);
-adaptation simply did not. One flag (`AdaptConfig.class_balanced`, now on by
-default) closes the gap entirely and lifts every baseline: `finetune` goes from
-0.21 to 0.39. The fair comparison is not merely fairer, it is a better system.
+Pretraining had always sampled class-balanced; adaptation did not.
+`AdaptConfig.class_balanced` (on by default, `--unbalanced-calibration` to
+reproduce the old behaviour) closes the gap entirely and lifts every baseline.
 
-What caught it was the per-class recall table, not the headline metric. A
-balanced-accuracy number alone looked like a clean win.
+The headline metric looked like a clean, significant win. What caught it was the
+**per-class recall table**, where 0.98 rest recall made the collapse obvious.
 
-### What is worth testing next
+### Still open
 
-`rapid` updates 664 parameters against 109,317 for full fine-tuning and is 0.08
-behind. That is not competitive on accuracy, but it is a different claim from
-the one the project started with, and two questions remain open:
+Neither of these rescues the original claim, but both are honest questions:
 
-* Does the gap hold under **sensor failure**? The failure sweep was disabled for
-  speed in this run. A heavily fine-tuned model may be more brittle to an
-  electrode dropping out.
-* Does it hold **across sessions**, where fine-tuning a whole backbone on one
-  session's electrode placement is exactly the thing that should overfit?
+* **Sensor failure.** `rapid` touches 664 parameters against 109,317. A fully
+  fine-tuned backbone may be more brittle when an electrode drops out. The sweep
+  exists (`remg.evaluate.robustness`) and was disabled for speed in this run.
+* **Cross session.** Fine-tuning a whole backbone on one session's electrode
+  placement is exactly what should overfit across a re-donning. Needs DB6.
 
-Neither is answered yet. Both are honest questions; neither rescues the original
-claim on its own.
-
-Also outstanding before any of this is quotable: a **seed-variance check** (one
-seed so far, so 0.08 is not yet known to exceed run-to-run noise) and the full
-15-subject DB2 cohort.
+The within-session drift proxy shows `finetune` losing the most between early
+and late held-out repetitions (-0.019 at 3 shots, against -0.009 for
+`linear_probe`), which is weak, same-session evidence pointing that way -- not
+enough to claim anything.
 
 ## Setup
 
