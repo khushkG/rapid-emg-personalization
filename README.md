@@ -19,17 +19,17 @@ digital hand.
 | Encoder, adapters, prototype head | done |
 | Pretraining with episodic meta-learning | done |
 | Four personalization conditions | done |
-| Metrics, sensor-failure sweep, rejection curves | done |
-| Protocol test suite (145 tests) | passing |
+| Metrics, sensor-failure sweep, rejection curves | done; **run on real data** (see Results) |
+| Protocol test suite (147 tests) | passing |
 | NinaPro DB2/DB3/DB6 loader | run against real DB2 and DB3 files; label-numbering bug found and fixed |
 | Movement subset | verified against the official movement list (one id was wrong — see Scope notes) |
 | Cross-repetition session proxy | done |
 | Real-data pipeline (DB2 -> DB3, end to end) | runs; `scripts/run_experiment.py` |
-| DB3 download | 10 of 11 subjects; cohort coverage verified |
-| DB2 download | subject 1 only (pretraining cohort not yet fetched) |
+| DB3 download | 11 of 11 subjects; cohort coverage verified |
+| DB2 download | 15 of 40 subjects (enough for the study) |
 | Cross-session experiment (day 1 → day 5) | needs DB6 (see Scope notes) |
 | Digital hand visualisation | done: `scripts/demo_hand.py` |
-| Real results | first study run; **the proposed method does not beat the baselines** (see Results) |
+| Real results | complete: clean, sensor-failure and abstention. **The proposed method does not beat the baselines on any axis measured** |
 
 Everything runs end-to-end today on synthetic data:
 
@@ -39,7 +39,7 @@ uv run python scripts/smoke.py     # ~1 minute
 
 Those numbers are plumbing checks, not findings. The data is simulated.
 
-The tests are the other half of that: 145 of them, covering the protocol rules
+The tests are the other half of that: 147 of them, covering the protocol rules
 below and the NinaPro loader against synthetic files written in the real `.mat`
 format (both v5 and v7.3 containers, the per-exercise label restart, and the
 reduced-channel amputee recordings).
@@ -112,20 +112,62 @@ reproduce the old behaviour) closes the gap entirely and lifts every baseline.
 The headline metric looked like a clean, significant win. What caught it was the
 **per-class recall table**, where 0.98 rest recall made the collapse obvious.
 
-### Still open
+### Robustness to electrode failure: hypothesis met, claim still dead
 
-Neither of these rescues the original claim, but both are honest questions:
+`rapid` touches 664 parameters against 109,317, so the remaining live question
+was whether it is less brittle when an electrode fails. **A threshold was fixed
+before running**: `rapid` wins only if it degrades less than `finetune` by more
+than 0.013, the measured seed noise.
 
-* **Sensor failure.** `rapid` touches 664 parameters against 109,317. A fully
-  fine-tuned backbone may be more brittle when an electrode drops out. The sweep
-  exists (`remg.evaluate.robustness`) and was disabled for speed in this run.
+It met that threshold:
+
+| electrodes failed | `finetune` drops | `rapid` drops | difference | 95% CI |
+| --- | --- | --- | --- | --- |
+| 1 | 0.066 | 0.040 | **+0.026** | [+0.020, +0.032] |
+| 2 | 0.112 | 0.069 | **+0.043** | [+0.033, +0.055] |
+
+`rapid` degrades less in 28 of 30 runs. Fewer parameters really are less
+brittle. Two further checks kill the claim anyway.
+
+**`finetune` never loses the lead.** It starts far enough ahead that degrading
+faster does not cost it the comparison:
+
+| electrodes failed | `finetune` | `rapid` | `finetune` still ahead in |
+| --- | --- | --- | --- |
+| 0 | **0.401** | 0.329 | -- |
+| 1 | **0.336** | 0.290 | 24/30 |
+| 2 | **0.289** | 0.260 | 23/30 |
+
+Same on the worst single electrode combination (0.202 against 0.182), which is
+the number that matters for a controller: surviving a random electrode failure
+while breaking on one particular electrode is not robustness.
+
+**The robustness is not `rapid`'s.** Against the cheap baseline, the difference
+in degradation is `-0.003` (1ch) and `+0.000` (2ch), both CIs spanning zero,
+p ~ 0.6. So the finding is *"full fine-tuning is more brittle"*, and a plain
+linear probe buys the same robustness with none of the machinery. `rapid`
+matches `linear_probe` on clean accuracy **and** on robustness -- it has no
+advantage on any axis measured.
+
+### Abstention and drift
+
+Both were run on the same predictions and neither separates the conditions in
+`rapid`'s favour. The rejection curves are in `results/robust15_curves.csv`,
+plotted only where every class survives the threshold -- past that point
+balanced accuracy is averaging over a smaller class set and is not comparable to
+the full-coverage number.
+
+The cross-repetition proxy shows `finetune` losing the most between early and
+late held-out repetitions (-0.018 at 3 shots against -0.011 for `linear_probe`),
+consistent with the brittleness above. It is same-session drift, not re-donning,
+and too small to carry a claim.
+
+### Genuinely still open
+
 * **Cross session.** Fine-tuning a whole backbone on one session's electrode
-  placement is exactly what should overfit across a re-donning. Needs DB6.
-
-The within-session drift proxy shows `finetune` losing the most between early
-and late held-out repetitions (-0.019 at 3 shots, against -0.009 for
-`linear_probe`), which is weak, same-session evidence pointing that way -- not
-enough to claim anything.
+  placement is exactly what should overfit across a re-donning, and it is the
+  one scenario where a 664-parameter method has a real case. Needs DB6, which is
+  not downloaded and whose URL layout is unverified.
 
 ## Setup
 
@@ -365,10 +407,10 @@ S10's exercise-3 file is also partial (2 of 9 force patterns), but those are ids
 
 **The variable-electrode-count warning did not reproduce.** An earlier version of
 this file said several DB3 amputees were recorded with fewer than 12 electrodes.
-Across the 10 subjects downloaded so far every file carries 12 channels. The
+Across all 11 subjects every file carries 12 channels. The
 loader's `expected_channels` guard is still there and still correct to keep --
-it is cheap, and the claim may yet hold for a subject not checked -- but it has
-not fired on real data, and nothing has been excluded for it.
+it is cheap -- but it never fired on the real cohort, and nothing has been
+excluded for it.
 
 **The movement subset has been verified** against Table I of Atzori et al.,
 "Building the NINAPRO Database" (BioRob 2012), cross-checked against the class
@@ -389,10 +431,21 @@ of reading the literature can establish.
 
 ## Next
 
-1. Fetch DB2 and DB3 with `scripts/fetch_data.py`, then run `inspect_data.py`.
-   No registration is needed; this is just a large download.
-2. Fix whatever `inspect_data.py` reports — the loader is tested against the
-   published layout, not against the actual files.
-3. Full leave-one-subject-out run: DB2 → DB3, shots 1/2/3, four conditions.
-4. Sensor-failure sweep; read off the cross-repetition proxy from the same run.
-5. Digital hand visualisation.
+The study is complete. What remains is one experiment and one decision.
+
+1. **The cross-session study.** The only unanswered part of the original
+   question, and the one scenario that could still favour a low-parameter
+   method. Needs DB6 downloaded and its URL layout confirmed.
+2. **Decide what this project reports.** The honest headline is that
+   personalization from three repetitions works well -- 0.16 to 0.40 balanced
+   accuracy over 12 classes -- and that ordinary fine-tuning is the best way to
+   do it among those tested. That is a useful negative result about adapters,
+   not a failed project, provided it is written up as what it is.
+
+Reproduce the headline numbers with:
+
+```
+uv run python scripts/run_experiment.py --steps 3000 --shots 1 2 3 --seeds 0 1 2 \
+    --tag robust15 --no-notch
+uv run python scripts/make_report.py --tag robust15
+```
