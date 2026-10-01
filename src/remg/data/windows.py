@@ -24,9 +24,18 @@ class WindowSet:
 
     X:       (N, C, L) float32
     y:       (N,) int64, contiguous class index
-    rep:     (N,) int16, repetition the window came from (0 for rest)
+    rep:     (N,) int16, repetition the window came from. Rest is given the
+             repetition of the movement it adjoins (see `with_rest_repetitions`)
+             so repetition-based splits keep rest on both sides.
     subject: (N,) int32
     session: (N,) int16
+    start:   (N,) int64, index of the window's first sample in its recording.
+             Kept because several questions are about *time*, not just counts:
+             how many separate false activations a controller would emit, how
+             long each one lasts, and whether two windows are actually adjacent.
+             Boundary windows are dropped during segmentation, so consecutive
+             rows are not necessarily consecutive in time -- `start` is what makes
+             that detectable rather than assumed.
     """
 
     X: np.ndarray
@@ -34,6 +43,7 @@ class WindowSet:
     rep: np.ndarray
     subject: np.ndarray
     session: np.ndarray
+    start: np.ndarray
     class_names: list[str]
     fs: int
 
@@ -56,6 +66,7 @@ class WindowSet:
             rep=self.rep[mask],
             subject=self.subject[mask],
             session=self.session[mask],
+            start=self.start[mask],
             class_names=self.class_names,
             fs=self.fs,
         )
@@ -82,7 +93,7 @@ def segment(
     cfg = cfg or WindowConfig()
     id_to_idx, class_names = subset_mapping(subset)
 
-    Xs, ys, reps, subs, sess = [], [], [], [], []
+    Xs, ys, reps, subs, sess, starts_out = [], [], [], [], [], []
     for rec in records:
         # Rest carries repetition 0 in NinaPro; give it one so repetition-based
         # calibration/test splits can keep the rest class balanced on both sides.
@@ -121,6 +132,7 @@ def segment(
         reps.append(rep_centre[keep].astype(np.int16))
         subs.append(np.full(len(sel), rec.subject, dtype=np.int32))
         sess.append(np.full(len(sel), rec.session, dtype=np.int16))
+        starts_out.append(sel.astype(np.int64))
 
     if not Xs:
         raise ValueError("no windows survived segmentation -- check labels, subset and purity")
@@ -131,6 +143,7 @@ def segment(
         rep=np.concatenate(reps),
         subject=np.concatenate(subs),
         session=np.concatenate(sess),
+        start=np.concatenate(starts_out),
         class_names=class_names,
         fs=records[0].fs,
     )

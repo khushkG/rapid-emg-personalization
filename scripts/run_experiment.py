@@ -116,6 +116,12 @@ def main() -> None:
                          "step counts and learning rates selected on held-out SOURCE "
                          "subjects. Without it the hand-set defaults in AdaptConfig are "
                          "used, which were never selected by any procedure.")
+    ap.add_argument("--gate", type=Path,
+                    help="JSON written by scripts/tune_gate.py holding the rest-gate "
+                         "threshold per condition, selected on held-out SOURCE subjects. "
+                         "Without it the gate runs at 0.5, which is an unchosen default.")
+    ap.add_argument("--no-two-stage", action="store_true",
+                    help="skip the rest-gate evaluation")
     ap.add_argument("--tag", default="run", help="prefix for the output files")
     ap.add_argument("--out", type=Path, default=Path("results"))
     args = ap.parse_args()
@@ -180,6 +186,19 @@ def main() -> None:
             print(f"  {cond:<13} {entry.get('config', '?')}")
         print("  selected on held-out source subjects; DB3 played no part\n", flush=True)
 
+    gate_thresholds: dict[str, float] = {}
+    if args.gate:
+        raw = json.loads(args.gate.read_text())
+        gate_thresholds = {k: float(v["threshold"]) for k, v in raw.items()
+                           if isinstance(v, dict) and "threshold" in v}
+        print("rest-gate thresholds from", args.gate)
+        for cond, entry in raw.items():
+            if isinstance(entry, dict) and "threshold" in entry:
+                met = entry.get("budget_met")
+                note = "" if met is None else ("" if met else "  (FAR budget not met on DB2)")
+                print(f"  {cond:<13} tau={entry['threshold']:.2f}{note}")
+        print("  selected on held-out source subjects; DB3 played no part\n", flush=True)
+
     cfg = ExperimentConfig(
         shots=tuple(args.shots),
         seeds=tuple(args.seeds),
@@ -187,6 +206,9 @@ def main() -> None:
         adapt=AdaptConfig(class_balanced=not args.unbalanced_calibration, **budget),
         failure_counts=() if args.no_failures else (1, 2),
         rejection=not args.no_rejection,
+        two_stage=not args.no_two_stage,
+        gate_thresholds=gate_thresholds,
+        stride_samples=int(round(wcfg.stride_ms * pcfg.target_fs / 1000)),
     )
 
     t0 = time.time()
@@ -215,6 +237,10 @@ def main() -> None:
         "adapt_budget_source": str(args.budget) if args.budget else "AdaptConfig defaults (not selected)",
         "adapt_config": {k: v for k, v in cfg.adapt.__dict__.items()},
         "window": {"length_ms": wcfg.length_ms, "stride_ms": wcfg.stride_ms},
+        "two_stage": cfg.two_stage,
+        "gate_threshold_source": str(args.gate) if args.gate
+            else ("GateConfig default 0.5 (not selected)" if cfg.two_stage else None),
+        "gate_thresholds": gate_thresholds,
         "elapsed_seconds": round(elapsed, 1),
     }
     (args.out / f"{args.tag}_meta.json").write_text(json.dumps(meta, indent=2))

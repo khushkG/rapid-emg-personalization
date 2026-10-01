@@ -20,7 +20,7 @@ digital hand.
 | Pretraining with episodic meta-learning | done |
 | Four personalization conditions | done |
 | Metrics, sensor-failure sweep, rejection curves | done; **run on real data** (see Results) |
-| Protocol test suite (155 tests) | passing |
+| Protocol test suite (166 tests) | passing |
 | NinaPro DB2/DB3/DB6 loader | run against real DB2 and DB3 files; label-numbering bug found and fixed |
 | Movement subset | verified against the official movement list (one id was wrong — see Scope notes) |
 | Cross-repetition session proxy | done |
@@ -32,6 +32,7 @@ digital hand.
 | Real results | complete: clean, sensor-failure and abstention. **The proposed method does not beat the baselines on any axis measured** |
 | Benchmark against the published DB3 protocol | done: classic baselines reproduce the literature, so the pipeline is sound (`scripts/benchmark.py`) |
 | Adaptation budget selected on held-out DB2 | done: every hand-set default was near the bottom of its grid (`scripts/tune_budget.py`) |
+| Rest handling / false-activation rate | measured for every method; two-stage gate halves the rate but not the event count (`remg/train/twostage.py`, `scripts/tune_gate.py`) |
 
 Everything runs end-to-end today on synthetic data:
 
@@ -210,6 +211,76 @@ reproduce the old behaviour) closes the gap entirely and lifts every baseline.
 
 The headline metric looked like a clean, significant win. What caught it was the
 **per-class recall table**, where 0.98 rest recall made the collapse obvious.
+
+### Rest handling: the cost of the class-balancing fix
+
+Balanced accuracy counts rest as one class in twelve, which hides the failure mode
+a prosthesis user would actually complain about. Two numbers expose it:
+`false_activation_rate` is the fraction of true-rest windows predicted as a
+movement (exactly `1 - rest_recall`), and `false_activations_per_min` counts
+*events* -- maximal runs of movement prediction inside a rest stretch. The second
+is not derivable from the first, and the difference matters: one sustained
+ten-second error and fifty scattered 200 ms twitches give the same rate.
+
+Training adaptation class-balanced was a real fix -- without it cross-entropy
+collapses onto rest. But balancing discards the rest prior, and that cost was
+never priced. The classic baselines, which train on the natural class balance,
+show what it bought and what it cost (12-class subset, per-subject training,
+smoothed, n=10):
+
+| method | bal acc | rest recall | false-activation rate | false activations/min |
+| --- | --- | --- | --- | --- |
+| `td_rf` | 0.465 | **0.982** | **0.018** | **1.8** |
+| `td_svm` | 0.480 | 0.970 | 0.030 | 3.4 |
+| `td_lda` | 0.451 | 0.951 | 0.049 | 4.2 |
+| `cnn_scratch` | 0.578 | 0.608 | 0.392 | 27.6 |
+| `cnn_pretrained_ft` | **0.638** | 0.505 | 0.495 | 28.8 |
+
+Same data, same protocol, same windows: a 10-16x difference in unwanted movements,
+caused by a sampling choice. The CNN wins balanced accuracy by spending rest
+accuracy to get it.
+
+**The two-stage gate.** Put the prior back where it belongs: stage 1 decides rest
+or movement and trains on the *natural* balance, stage 2 is the existing balanced
+head with rest removed from the argmax (`remg/train/twostage.py`). Stage 1 is a
+logistic regression on already-adapted embeddings -- 129 parameters, no gradient
+steps, nothing added to the headline parameter counts. The threshold is an
+operating point, so it is selected on held-out DB2 with a goal fixed in advance:
+maximise balanced accuracy subject to false-activation rate <= 0.10
+(`scripts/tune_gate.py`). DB3 plays no part.
+
+On DB3 at 3 shots, paired per (subject, seed), n=30:
+
+| condition | bal acc | macro F1 | rest recall | false-act rate | FA/min | mean burst |
+| --- | --- | --- | --- | --- | --- | --- |
+| `finetune` | 0.510 -> 0.483 | 0.386 -> **0.444** | 0.450 -> **0.749** | 0.550 -> **0.251** | 56.0 -> 49.7 | 576 -> **286 ms** |
+| `rapid` | 0.353 -> 0.331 | 0.283 -> 0.307 | 0.537 -> 0.791 | 0.463 -> 0.209 | 47.3 -> 39.9 | 552 -> 290 ms |
+| `linear_probe` | 0.376 -> 0.368 | 0.283 -> 0.324 | 0.433 -> 0.669 | 0.567 -> 0.331 | 61.3 -> 39.0 | 576 -> 418 ms |
+
+Every rate and F1 change has p <= 1e-5; the balanced-accuracy losses are
+significant too (p <= 0.04). Macro F1 *rises* because the gate removes false
+positives, which F1 counts and recall-based balanced accuracy does not.
+
+**What the event count reveals that the rate hides.** The per-window rate halves
+almost entirely because each unwanted movement is half as long (576 -> 286 ms),
+not because there are half as many: FA/min goes 56.0 -> 49.7, p = 0.05, and for
+`rapid` 47.3 -> 39.9, p = 0.11 -- not reliably improved. Reporting only
+`1 - rest_recall` would have implied half as many unwanted movements. A user would
+still feel roughly one spurious activation per second of rest.
+
+**Verdict.** The gate is the right shape of fix and it is not enough. `td_rf` with
+per-subject training emits 1.8 false activations per minute at 0.465 balanced
+accuracy; gated few-shot `finetune` emits 49.7 at 0.483. Those are different
+protocols and not directly comparable, but inside the benchmark, where the
+protocol is identical, the classic method beats the deep model 16x on false
+activations *and* has higher plain accuracy. On this evidence `td_rf` is what you
+would ship.
+
+Two caveats. The <= 0.10 budget was met on DB2 (0.092) and missed on DB3 (0.251):
+a threshold chosen where the rate is 0.295 is systematically too permissive where
+it is 0.550, which is the honest price of not touching the test cohort. And
+`none` + gate is not "no personalization" -- the gate is fitted on calibration
+windows -- so that row is a reference, not a control.
 
 ### Robustness to electrode failure: hypothesis met, claim still dead
 

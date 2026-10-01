@@ -42,6 +42,8 @@ from remg.data.movements import DEFAULT_SUBSET, OFFICIAL_MOVEMENT_NAMES
 from remg.data.ninapro import load_cohort, load_subject
 from remg.data.normalize import fit as fit_normalizer
 from remg.data.windows import WindowSet
+from remg.evaluate.metrics import rest_metrics
+from remg.features import fit_zc_threshold, td_features
 
 # --- the protocol, fixed --------------------------------------------------
 TRAIN_REPS = (1, 3, 4, 6)
@@ -60,34 +62,8 @@ BATCH = 128
 SCRATCH_LR, FINETUNE_LR = 1e-3, 3e-4
 
 
-# --- classic time-domain features -----------------------------------------
-
-def td_features(X: np.ndarray, zc_threshold: np.ndarray) -> np.ndarray:
-    """The five standard Hudgins-style features, per channel.
-
-    X is (N, C, L). `zc_threshold` is (C,), a per-channel deadzone fitted on the
-    training windows -- without one, amplifier noise around zero inflates the
-    zero-crossing and slope-sign-change counts into nonsense.
-    """
-    mav = np.abs(X).mean(axis=2)
-    rms = np.sqrt((X ** 2).mean(axis=2))
-    wl = np.abs(np.diff(X, axis=2)).sum(axis=2)
-
-    thr = zc_threshold[None, :, None]
-    a, b = X[:, :, :-1], X[:, :, 1:]
-    zc = (((a * b) < 0) & (np.abs(a - b) >= thr)).sum(axis=2)
-
-    d = np.diff(X, axis=2)
-    d1, d2 = d[:, :, :-1], d[:, :, 1:]
-    ssc = (((d1 * d2) < 0) & ((np.abs(d1) >= thr) | (np.abs(d2) >= thr))).sum(axis=2)
-
-    return np.concatenate([mav, rms, wl, zc, ssc], axis=1).astype(np.float64)
-
-
-def fit_zc_threshold(X_train: np.ndarray, frac: float = 0.01) -> np.ndarray:
-    """Per-channel deadzone, from training windows only."""
-    return frac * np.sqrt((X_train ** 2).mean(axis=(0, 2)))
-
+# Classic time-domain features live in remg.features so the literature baseline
+# and the classic rest gate cannot drift apart.
 
 # --- majority-vote smoothing ----------------------------------------------
 
@@ -248,6 +224,9 @@ def main() -> None:
     device = pick_device(None)
     pcfg = PreprocessConfig(notch_hz=None, target_fs=args.target_fs)
     wcfg = WindowConfig(length_ms=args.length_ms, stride_ms=args.stride_ms)
+    # Each window represents one stride of wall-clock time, which is what turns a
+    # count of mistaken windows into a false-activation rate per minute.
+    stride_samples = int(round(wcfg.stride_ms * pcfg.target_fs / 1000))
 
     # S1 is excluded from the 12-movement runs for the documented reason (it has
     # no tripod or lateral grasp). Under the full movement set that reason does
@@ -323,19 +302,28 @@ def main() -> None:
                                              FINETUNE_LR, pretrained_encoder)
         print(f"  CNN methods {time.time() - t:.0f}s", flush=True)
 
+        # One group per repetition so a false-activation event is never counted as
+        # continuing across the seam between two repetitions.
+        rest_group = test.rep.astype(np.int64)
         for method, p in preds.items():
             for smoothing in (False, True):
                 yp = smooth_predictions(p, test.rep, SMOOTH_WINDOWS) if smoothing else p
                 m = metrics(test.y, yp, n_classes, rest_index)
+                rm = rest_metrics(test.y, yp, start=test.start, group=rest_group,
+                                  stride_samples=stride_samples, fs=test.fs,
+                                  rest_index=0 if rest_index is None else rest_index)
                 rows.append({
                     "subject": subject, "method": method, "smoothed": smoothing,
                     "movements": args.movements, "n_classes": n_classes,
-                    "n_train": len(train), "n_test": len(test), **m,
+                    "n_train": len(train), "n_test": len(test), **m, **rm.as_row(),
                 })
                 mark = " (smoothed)" if smoothing else ""
                 print(f"    {method:<18}{mark:<12} acc {m['accuracy']:.3f}  "
                       f"acc_no_rest {m['accuracy_no_rest']:.3f}  "
-                      f"bal {m['balanced_accuracy']:.3f}  F1 {m['macro_f1']:.3f}", flush=True)
+                      f"bal {m['balanced_accuracy']:.3f}  F1 {m['macro_f1']:.3f}  "
+                      f"rest_rec {rm.rest_recall:.3f}  "
+                      f"false_act {rm.false_activation_rate:.3f}  "
+                      f"fa/min {rm.false_activations_per_min:.1f}", flush=True)
 
     import pandas as pd
 
@@ -369,6 +357,14 @@ def main() -> None:
             "class_balanced_sampling": True,
         },
         "pretrain_steps": args.pretrain_steps,
+        "rest_behaviour": {
+            "false_activation_rate": "fraction of true-rest windows predicted as a "
+                                     "movement; exactly 1 - rest_recall",
+            "false_activations_per_min": "maximal runs of movement prediction inside a "
+                                         "true-rest stretch, per minute of rest; events, "
+                                         "not windows, and not derivable from the rate",
+            "event_grouping": "per repetition, so no event spans a seam between two",
+        },
         "smoothing": {"kind": "majority vote", "span_windows": SMOOTH_WINDOWS,
                       "span_ms": SMOOTH_WINDOWS * args.stride_ms,
                       "crosses_repetition_boundary": False},

@@ -45,6 +45,7 @@ class ChannelStats:
             rep=ws.rep,
             subject=ws.subject,
             session=ws.session,
+            start=ws.start,
             class_names=ws.class_names,
             fs=ws.fs,
         )
@@ -70,6 +71,7 @@ def normalize_per_subject(ws: WindowSet, *, robust: bool = True) -> WindowSet:
         rep=ws.rep,
         subject=ws.subject,
         session=ws.session,
+        start=ws.start,
         class_names=ws.class_names,
         fs=ws.fs,
     )

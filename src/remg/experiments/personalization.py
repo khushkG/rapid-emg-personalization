@@ -26,10 +26,17 @@ from ..data import fit_normalizer
 from ..data.normalize import normalize_per_subject
 from ..data.splits import calibration_split, recency_partition, subjects
 from ..data.windows import WindowSet
-from ..evaluate.metrics import rejection_curve, score
+from ..evaluate.metrics import rejection_curve, rest_metrics, score
 from ..evaluate.robustness import channel_failure_sweep
 from ..train.adapt import CONDITIONS, AdaptConfig, adapt
 from ..train.pretrain import PretrainConfig, pretrain
+from ..train.twostage import (
+    GateConfig,
+    _argmax_excluding_rest,
+    apply_threshold,
+    fit_gate,
+    gate_scores,
+)
 from ..utils import pick_device
 
 
@@ -51,6 +58,16 @@ class ExperimentConfig:
     # predictions already computed -- so it is on by default.
     recency_split: bool = True
     recency_bins: int = 2
+    # Rest-gate (two-stage) evaluation. Scored alongside the single-stage
+    # prediction from the same adapted model, so the two differ only in the
+    # decision rule and the comparison costs one extra forward pass. Thresholds
+    # must come from held-out source subjects -- see scripts/tune_gate.py.
+    two_stage: bool = True
+    gate_thresholds: dict[str, float] = field(default_factory=dict)
+    gate: GateConfig = field(default_factory=GateConfig)
+    # Window stride, needed to turn window counts into wall-clock for the
+    # false-activation event rate. Must match the WindowConfig used to segment.
+    stride_samples: int = 100
     pretrain: PretrainConfig = field(default_factory=PretrainConfig)
     adapt: AdaptConfig = field(default_factory=AdaptConfig)
     device: str | None = None
@@ -101,7 +118,16 @@ def run(
                     res = adapt(base, calib_n, condition, device, acfg, split.calib_reps)
 
                     proba = res.predict_proba(test_n, device)
-                    sc = score(test_n.y, proba.argmax(axis=1), test_n.class_names)
+                    pred = proba.argmax(axis=1)
+                    sc = score(test_n.y, pred, test_n.class_names)
+                    # One group per (subject, session, repetition) so a false
+                    # activation is never counted as running across a seam.
+                    rest_group = (test_n.subject.astype(np.int64) * 1_000_000
+                                  + test_n.session.astype(np.int64) * 1000
+                                  + test_n.rep.astype(np.int64))
+                    rm = rest_metrics(test_n.y, pred, start=test_n.start,
+                                      group=rest_group,
+                                      stride_samples=cfg.stride_samples, fs=test_n.fs)
                     base_row = {
                         "seed": seed,
                         "subject": subj,
@@ -112,7 +138,10 @@ def run(
                         "calib_reps": ",".join(map(str, res.calib_reps)),
                         "adapt_seconds": res.seconds,
                         "updated_params": res.updated_params,
+                        "stage": "single",
+                        "gate_threshold": float("nan"),
                         **sc.as_row(),
+                        **rm.as_row(),
                     }
                     rows.append(base_row)
                     if verbose:
@@ -122,6 +151,36 @@ def run(
                             f"({res.seconds:.1f}s, {res.updated_params} params)",
                             flush=True,
                         )
+
+                    if cfg.two_stage:
+                        # Stage 1 learns that rest is common (natural prior);
+                        # stage 2 is the same class-balanced head with rest taken
+                        # out of the argmax. Threshold from held-out DB2.
+                        tau = cfg.gate_thresholds.get(condition, cfg.gate.threshold)
+                        gate = fit_gate(res.model, calib_n, device, cfg.gate)
+                        if not gate.degenerate:
+                            p_move = gate_scores(res.model, test_n, device, gate)
+                            mv = _argmax_excluding_rest(proba, cfg.gate.rest_index)
+                            tpred = apply_threshold(p_move, mv, tau, cfg.gate.rest_index)
+                            tsc = score(test_n.y, tpred, test_n.class_names)
+                            trm = rest_metrics(test_n.y, tpred, start=test_n.start,
+                                               group=rest_group,
+                                               stride_samples=cfg.stride_samples,
+                                               fs=test_n.fs)
+                            rows.append({**base_row, "stage": "two_stage",
+                                         "gate_threshold": float(tau),
+                                         "gate_params": gate.gate_params,
+                                         "adapt_seconds": res.seconds + gate.seconds,
+                                         **tsc.as_row(), **trm.as_row()})
+                            if verbose:
+                                print(f"      two-stage tau={tau:.2f}: "
+                                      f"bal {tsc.balanced_accuracy:.3f} "
+                                      f"(single {sc.balanced_accuracy:.3f})  "
+                                      f"false-activation {trm.false_activation_rate:.3f} "
+                                      f"(single {rm.false_activation_rate:.3f})",
+                                      flush=True)
+                        elif verbose:
+                            print(f"      two-stage skipped: {gate.describe()}", flush=True)
 
                     if cfg.recency_split:
                         # Same predictions, regrouped by how long after calibration
@@ -139,6 +198,7 @@ def run(
                             )
                             rows.append({
                                 **base_row,
+                                "stage": "single",
                                 "evaluation": f"clean_{name}",
                                 "n_windows": int(mask.sum()),
                                 **rsc.as_row(),
