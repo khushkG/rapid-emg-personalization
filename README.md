@@ -20,7 +20,7 @@ digital hand.
 | Pretraining with episodic meta-learning | done |
 | Four personalization conditions | done |
 | Metrics, sensor-failure sweep, rejection curves | done; **run on real data** (see Results) |
-| Protocol test suite (147 tests) | passing |
+| Protocol test suite (155 tests) | passing |
 | NinaPro DB2/DB3/DB6 loader | run against real DB2 and DB3 files; label-numbering bug found and fixed |
 | Movement subset | verified against the official movement list (one id was wrong — see Scope notes) |
 | Cross-repetition session proxy | done |
@@ -30,6 +30,8 @@ digital hand.
 | Cross-session experiment (day 1 → day 5) | needs DB6 (see Scope notes) |
 | Digital hand visualisation | done: `scripts/demo_hand.py` |
 | Real results | complete: clean, sensor-failure and abstention. **The proposed method does not beat the baselines on any axis measured** |
+| Benchmark against the published DB3 protocol | done: classic baselines reproduce the literature, so the pipeline is sound (`scripts/benchmark.py`) |
+| Adaptation budget selected on held-out DB2 | done: every hand-set default was near the bottom of its grid (`scripts/tune_budget.py`) |
 
 Everything runs end-to-end today on synthetic data:
 
@@ -48,41 +50,138 @@ reduced-channel amputee recordings).
 
 Leave-one-subject-out, 15 DB2 subjects pretraining, 10 DB3 amputees evaluated,
 3000 steps, **3 seeds** (n = 30 subject-seed pairs). Balanced accuracy over 12
-classes; chance is 0.083.
+classes; chance is 0.083. Adaptation step counts and learning rates are selected
+on **held-out DB2 subjects** (`scripts/tune_budget.py`); DB3 never participates.
+Source: `results/tuned15_rows.csv`.
 
 | shots | `none` | `linear_probe` | **`finetune`** | `rapid` |
 | --- | --- | --- | --- | --- |
-| 1 | 0.160 | 0.286 | **0.347** | 0.294 |
-| 2 | 0.161 | 0.312 | **0.379** | 0.320 |
-| 3 | 0.157 | 0.328 | **0.403** | 0.331 |
+| 1 | 0.163 | 0.307 | **0.395** | 0.310 |
+| 2 | 0.159 | 0.350 | **0.477** | 0.333 |
+| 3 | 0.155 | 0.375 | **0.508** | 0.351 |
 
 Paired per (subject, seed), with bootstrap 95% confidence intervals:
 
 | comparison | shots=3 mean | 95% CI | wins | p |
 | --- | --- | --- | --- | --- |
-| `finetune` - `rapid` | **+0.072** | [+0.054, +0.090] | 28/30 | 6e-08 |
-| `finetune` - `linear_probe` | **+0.075** | [+0.062, +0.089] | 30/30 | 2e-09 |
-| `rapid` - `linear_probe` | +0.003 | [-0.010, +0.021] | 16/30 | 0.98 |
+| `finetune` - `rapid` | **+0.157** | [+0.132, +0.181] | 28/30 | 9e-09 |
+| `finetune` - `linear_probe` | **+0.133** | [+0.113, +0.150] | 29/30 | 4e-09 |
+| `rapid` - `linear_probe` | **-0.024** | [-0.038, -0.010] | 7/30 | 0.0015 |
 
 **The central hypothesis is not supported.** `rapid` -- FiLM adapters plus
-prototypes, 664 parameters -- is statistically indistinguishable from the cheap
-linear-probe baseline (CI spans zero at every shot count) and loses to ordinary
-full fine-tuning by 0.05 to 0.07, in 24-28 of 30 runs.
+prototypes, 664 parameters -- loses to the cheap linear-probe baseline, and loses
+to ordinary full fine-tuning by 0.157 in 28 of 30 runs.
 
-Seed-to-seed spread of the cohort mean is **0.013**, so the gap to `finetune` is
-four to five times run-to-run noise. This is not a variance artifact.
+Seed-to-seed spread of the cohort mean is **0.007**, so the gap to `finetune` is
+more than twenty times run-to-run noise. This is not a variance artifact.
+
+Earlier runs used hand-set adaptation budgets that were never selected by any
+procedure (`results/main15_rows.csv`, kept for provenance). Those budgets
+understated every condition and understated `finetune` most, which flattered the
+proposed method -- see *The adaptation budget was never selected* below. The
+robustness, abstention and drift sections further down were measured at the old
+budget and have not been rerun.
 
 What *is* supported, clearly: personalization works. One calibration repetition
-takes balanced accuracy from 0.16 to 0.29-0.35 -- roughly double, against a
-general model sitting near twice chance. The question was never whether to
+takes balanced accuracy from 0.16 to 0.31-0.40 -- roughly double to two and a
+half times, against a general model sitting near twice chance. The question was never whether to
 personalize; it is whether this way is better, and it is not.
+
+### Benchmark against published DB3 results
+
+Is the model weak, or is the few-shot setup simply harder than the published
+protocols? Answered by running the standard NinaPro protocol -- per-subject
+training on repetitions 1/3/4/6, testing on 2/5 -- with `scripts/benchmark.py`.
+Mean over subjects, majority-vote smoothed over 5 windows (500 ms):
+
+| movement set | method | acc (with rest) | acc (no rest) | bal acc | macro F1 |
+| --- | --- | --- | --- | --- | --- |
+| full, 39-50 classes | `td_lda` | 0.506 | 0.302 | 0.331 | 0.352 |
+| | `td_svm` | 0.548 | 0.346 | 0.381 | 0.427 |
+| | `td_rf` | **0.556** | 0.364 | 0.394 | 0.439 |
+| | `cnn_scratch` | 0.303 | 0.442 | 0.439 | 0.361 |
+| | `cnn_pretrained_ft` | 0.297 | 0.414 | 0.417 | 0.339 |
+| 12-class subset | `td_svm` | 0.793 | 0.409 | 0.480 | 0.523 |
+| | `cnn_scratch` | 0.596 | 0.568 | 0.578 | 0.480 |
+| | `cnn_pretrained_ft` | 0.535 | **0.643** | **0.632** | 0.481 |
+
+**The pipeline is sound.** Published classic-feature SVM on DB3 sits around 46%
+plain accuracy; ours is 54.8% on the same full movement set under the same
+protocol. That baseline shares this repository's loader, windowing, filtering,
+label handling and split logic, so the agreement validates all of it
+independently of any deep learning.
+
+**The published 66-85% deep-learning band is not measuring what we measure.** Our
+CNN gets 0.30 plain accuracy on the full set yet beats every classic method on
+accuracy-excluding-rest and on balanced accuracy. Rest is ~79% of windows and we
+train class-balanced, so the CNN forgoes a prior those numbers bank. On the
+12-class subset the same model scores 0.535 plain and 0.632 balanced -- one model,
+numbers 10 points apart, depending only on how rest is counted.
+
+**Recording quality dominates DB3.** S7's EMG amplitude during attempted movement
+is 1.00x its resting amplitude -- the signal does not change when the subject
+tries to move -- and two of its twelve channels are flat. Across the 11 subjects,
+active/rest amplitude ratio predicts balanced accuracy at Spearman rho = 0.84,
+p = 0.0013 (`results/db3_signal_quality.csv`); four subjects sit below 1.5x. No
+architecture change moves that ceiling.
+
+### The adaptation budget was never selected
+
+The benchmark exposed an asymmetry that has nothing to do with the few-shot
+regime: per-subject training fine-tuned for 600 steps at lr 3e-4, while the
+few-shot `finetune` condition used **100 steps at lr 1e-4** -- a default, not a
+choice. `scripts/tune_budget.py` selects it properly, splitting DB2 by person:
+subjects 1-11 pretrain, 12-15 are held out and treated exactly like unseen
+targets. DB3 is never loaded (`db3_loaded: false` in the meta file).
+
+Every hand-set default turned out to be at or near the bottom of its own grid:
+
+| condition | old default | rank in its grid | selected | DB2 bal acc |
+| --- | --- | --- | --- | --- |
+| `finetune` | 100 @ 1e-4 | **12th of 12** | 300 @ 3e-4 | 0.618 -> 0.669 |
+| `linear_probe` | 200 @ 1e-3 | **6th of 6** | 600 @ 3e-3 | 0.526 -> 0.568 |
+| `rapid` | 50 @ 5e-3 | 11th of 12 | 600 @ 5e-3 | 0.511 -> 0.532 |
+
+All three adaptive conditions were re-selected, not only `finetune`. Fixing the
+winning condition's budget alone would have replaced one unfair comparison with
+its mirror image.
+
+The fix helps, and it helps the baselines most. On DB3 at 3 shots `finetune` gains
++0.105, `linear_probe` +0.047 and `rapid` +0.020, while `none` moves by -0.002,
+which is the MPS run-to-run noise floor. The `finetune`-`rapid` gap doubled from
+0.072 to 0.157, and `rapid` went from tying `linear_probe` (p = 0.98) to losing to
+it (p = 0.0015).
+
+**`rapid` is saturated.** A 24x increase in its adaptation steps buys +0.020, and
+its DB2 grid spans 0.049 across twelve configurations with the top seven inside
+0.007. Its 664 parameters are the binding constraint, not its training budget.
+
+**How close does few-shot get to full per-subject training?** Three calibration
+repetitions reach **86% of the unsmoothed per-subject reference** (0.508 against
+0.590), up from 68% at the old budget; against the smoothed 0.632 it is 80%. The
+two protocols hold out different repetitions, so this is close-but-not-exact.
+Roughly half of what looked like "the few-shot regime is harder" was an untuned
+default.
+
+One caveat on the selection machinery itself. The tie-break prefers the cheapest
+configuration within one SEM of the best, and the first implementation measured
+cost in wall-clock seconds. The host paged into swap mid-search and recorded 91s
+for a 600-step configuration against 21s for a 1200-step one, inverting the
+ordering for `rapid`. Cost is now counted in **steps** (`config_steps`, guarded by
+`tests/test_budget_selection.py`). The completed DB3 run used the wall-clock pick
+of 1200 steps for `rapid`; the step-rule pick is 600 steps at 0.5318 against
+0.5341 -- inside the SEM band, and in the direction of giving the proposed method
+*more* budget -- so the run was not repeated. `results/budget_chosen.json` is what
+that run used; `results/budget_chosen_steprule.json` is what the corrected rule
+selects and what new runs should use.
 
 ### The rescue hypothesis, tested and rejected
 
 `rapid` depends on episodic meta-learning, whose episodes are sampled across
 source subjects, so the obvious objection to an earlier 7-subject run was that
 the episodic objective had too little subject diversity to work with. Doubling
-the pretraining cohort to 15 does not rescue it:
+the pretraining cohort to 15 does not rescue it (both columns at the old
+hand-set budget, which is the comparison that was available at the time):
 
 | | 7 subjects | 15 subjects | gain |
 | --- | --- | --- | --- |

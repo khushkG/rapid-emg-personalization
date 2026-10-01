@@ -1,0 +1,88 @@
+{
+  "source": "DB2",
+  "target": "DB3",
+  "source_subjects": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "target_subjects": [
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+  ],
+  "excluded_target_subjects": [
+    1
+  ],
+  "documented_exclusions": {
+    "DB3-S1": "DB3: 1 subject(s) excluded\n  S1: performed only 12 of the 23 grasping movements (global ids 18-29), so the recording contains no tripod grasp (30) and no lateral grasp (34). The few-shot conditions require a calibration example of every movement in DEFAULT_SUBSET, and this subject can supply none for those two. Verified with scripts/inspect_data.py; the other 9 DB3 subjects checked carry all 12."
+  },
+  "classes": [
+    "rest",
+    "open_hand",
+    "close_hand",
+    "point_index",
+    "wrist_supination",
+    "wrist_pronation",
+    "wrist_flexion",
+    "wrist_extension",
+    "large_diameter_grasp",
+    "medium_wrap",
+    "tripod_grasp",
+    "lateral_grasp"
+  ],
+  "movement_ids": [
+    0,
+    5,
+    6,
+    7,
+    9,
+    10,
+    13,
+    14,
+    18,
+    22,
+    30,
+    34
+  ],
+  "shots": [
+    1,
+    2,
+    3
+  ],
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "pretrain_steps": 3000,
+  "preprocess": {
+    "notch_hz": null,
+    "target_fs": 1000
+  },
+  "calibration_class_balanced": true,
+  "window": {
+    "length_ms": 200.0,
+    "stride_ms": 100.0
+  },
+  "elapsed_seconds": 3319.6
+}

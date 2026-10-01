@@ -18,6 +18,7 @@ subject has no calibration example of it and the few-shot conditions assume one
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import time
 from pathlib import Path
@@ -52,9 +53,16 @@ def build(root: Path, dataset: str, subjects, cfg: PreprocessConfig, wcfg: Windo
     recs = load_cohort(root, dataset, subjects=subjects,
                        expected_channels=expected_channels, verbose=True)
     t0 = time.time()
-    recs = [preprocess(r, cfg) for r in recs]
-    print(f"  preprocessed {len(recs)} subject(s) in {time.time() - t0:.0f}s", flush=True)
+    # In place, so the raw and filtered copies of a ~2 GB cohort are never both
+    # alive. Holding them together paged a 16 GB machine into swap during the
+    # budget search and slowed it by more than an order of magnitude.
+    n_recs = len(recs)
+    for i in range(n_recs):
+        recs[i] = preprocess(recs[i], cfg)
+    print(f"  preprocessed {n_recs} subject(s) in {time.time() - t0:.0f}s", flush=True)
     ws = segment(recs, cfg=wcfg)
+    recs.clear()
+    gc.collect()
     print(f"  {ws.X.shape[0]:,} windows, {ws.X.shape[1]} channels, {ws.n_classes} classes",
           flush=True)
     return ws
@@ -103,6 +111,11 @@ def main() -> None:
     ap.add_argument("--unbalanced-calibration", action="store_true",
                     help="train the gradient baselines on unbalanced calibration windows "
                          "(the old, unfair behaviour -- for measuring what balancing changed)")
+    ap.add_argument("--budget", type=Path,
+                    help="JSON written by scripts/tune_budget.py holding the adaptation "
+                         "step counts and learning rates selected on held-out SOURCE "
+                         "subjects. Without it the hand-set defaults in AdaptConfig are "
+                         "used, which were never selected by any procedure.")
     ap.add_argument("--tag", default="run", help="prefix for the output files")
     ap.add_argument("--out", type=Path, default=Path("results"))
     args = ap.parse_args()
@@ -145,11 +158,33 @@ def main() -> None:
         target = target.select(keep)
         print(f"\nexcluded target subjects {incomplete} (--drop-incomplete)")
 
+    # The adaptation budget, if it was selected rather than guessed. Only the
+    # keys AdaptConfig actually has are accepted, so a stale or hand-edited file
+    # fails loudly here instead of being silently ignored.
+    budget: dict = {}
+    if args.budget:
+        raw = json.loads(args.budget.read_text())
+        allowed = set(AdaptConfig().__dict__)
+        for cond, entry in raw.items():
+            for k, v in entry.items():
+                if k in allowed:
+                    budget[k] = v
+        unknown = [k for e in raw.values() for k in e
+                   if k not in allowed and k not in
+                   ("config", "val_balanced_accuracy", "best_in_grid", "tie_band_sem",
+                    "mean_adapt_seconds", "per_shot_best_diagnostic")]
+        if unknown:
+            raise SystemExit(f"--budget file has unrecognized keys: {sorted(set(unknown))}")
+        print(f"\nadaptation budget from {args.budget}:")
+        for cond, entry in raw.items():
+            print(f"  {cond:<13} {entry.get('config', '?')}")
+        print("  selected on held-out source subjects; DB3 played no part\n", flush=True)
+
     cfg = ExperimentConfig(
         shots=tuple(args.shots),
         seeds=tuple(args.seeds),
         pretrain=PretrainConfig(steps=args.steps),
-        adapt=AdaptConfig(class_balanced=not args.unbalanced_calibration),
+        adapt=AdaptConfig(class_balanced=not args.unbalanced_calibration, **budget),
         failure_counts=() if args.no_failures else (1, 2),
         rejection=not args.no_rejection,
     )
@@ -177,6 +212,8 @@ def main() -> None:
         "shots": args.shots, "seeds": args.seeds, "pretrain_steps": args.steps,
         "preprocess": {"notch_hz": pcfg.notch_hz, "target_fs": pcfg.target_fs},
         "calibration_class_balanced": cfg.adapt.class_balanced,
+        "adapt_budget_source": str(args.budget) if args.budget else "AdaptConfig defaults (not selected)",
+        "adapt_config": {k: v for k, v in cfg.adapt.__dict__.items()},
         "window": {"length_ms": wcfg.length_ms, "stride_ms": wcfg.stride_ms},
         "elapsed_seconds": round(elapsed, 1),
     }

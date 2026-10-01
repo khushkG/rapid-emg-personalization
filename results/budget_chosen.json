@@ -1,0 +1,41 @@
+{
+  "finetune": {
+    "config": "steps=300,lr=0.0003",
+    "finetune_steps": 300,
+    "finetune_lr": 0.0003,
+    "val_balanced_accuracy": 0.6693271279708293,
+    "best_in_grid": 0.6738811973866726,
+    "tie_band_sem": 0.005012036431264429,
+    "mean_adapt_seconds": 6.839233696460724,
+    "per_shot_best_diagnostic": {
+      "1": "steps=600,lr=0.0001",
+      "3": "steps=1200,lr=0.0001"
+    }
+  },
+  "linear_probe": {
+    "config": "steps=600,lr=0.003",
+    "probe_steps": 600,
+    "probe_lr": 0.003,
+    "val_balanced_accuracy": 0.5676583394680732,
+    "best_in_grid": 0.5705305804913592,
+    "tie_band_sem": 0.00668850713372063,
+    "mean_adapt_seconds": 4.162564903497696,
+    "per_shot_best_diagnostic": {
+      "1": "steps=1200,lr=0.003",
+      "3": "steps=1200,lr=0.003"
+    }
+  },
+  "rapid": {
+    "config": "steps=1200,lr=0.001",
+    "rapid_steps": 1200,
+    "rapid_lr": 0.001,
+    "val_balanced_accuracy": 0.5340617046440326,
+    "best_in_grid": 0.5340617046440326,
+    "tie_band_sem": 0.00360988466512167,
+    "mean_adapt_seconds": 20.77119216322899,
+    "per_shot_best_diagnostic": {
+      "1": "steps=600,lr=0.005",
+      "3": "steps=1200,lr=0.001"
+    }
+  }
+}
