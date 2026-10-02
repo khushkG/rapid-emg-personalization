@@ -34,6 +34,7 @@ digital hand.
 | Adaptation budget selected on held-out DB2 | done: every hand-set default was near the bottom of its grid (`scripts/tune_budget.py`) |
 | Rest handling / false-activation rate | measured for every method; two-stage gate halves the rate but not the event count (`remg/train/twostage.py`, `scripts/tune_gate.py`) |
 | Decision rules: debounce, classic `td_rf` gate | done; debounce fails its own accuracy goal, the classic gate beats the logistic one (`remg/evaluate/temporal.py`, `scripts/tune_rules.py`) |
+| Matched-data comparison against `td_rf` | done: the network's margin is +0.036 balanced accuracy for 4.5x the false activations (`scripts/classic_fewshot.py`) |
 
 Everything runs end-to-end today on synthetic data:
 
@@ -359,6 +360,75 @@ cohort is recordings in which the question is close to unanswerable.
 despite a third fewer of them. Any rule that suppresses brief activations leaves
 the long ones behind, so burst length must be read next to the event count, never
 alone.
+
+### The control that was missing: td_rf on the same few repetitions
+
+Every earlier comparison against the classic baseline was unfair in one direction
+or the other. `td_rf` looked excellent in the literature benchmark, but that gave it
+**four** repetitions of the subject's own data, while the few-shot conditions get
+one, two or three. So the question this project actually turns on -- is a shallow
+model on hand-crafted features better than a pretrained network *in the regime the
+project is about* -- had never been asked. `scripts/classic_fewshot.py` asks it:
+identical subjects, identical calibration repetitions, identical test repetitions,
+identical normalization and windows, the model being the only difference.
+
+**A correction to the previous section's conclusion.** After the decision-rule work
+the summary here claimed that per-subject `td_rf` beat the best few-shot
+configuration "on both axes". That compared `td_rf` on four repetitions against the
+network on three. Matched properly it does not hold: at three repetitions each,
+`td_rf` reaches 0.562 balanced accuracy against the gated network's 0.598.
+Pretraining buys something real, and the earlier framing understated it.
+
+3 shots, mean over subjects:
+
+| cohort | method | bal acc | macro F1 | FA/min | mean burst |
+| --- | --- | --- | --- | --- | --- |
+| all 10 | `finetune` | **0.506** | 0.383 | 54.3 | 597 ms |
+| | `finetune` + classic gate | 0.484 | **0.455** | 33.6 | 384 ms |
+| | **`td_rf` (few-shot)** | 0.393 | 0.431 | **4.88** | 252 ms |
+| adequate (5) | `finetune` | **0.616** | 0.478 | 52.9 | 469 ms |
+| | `finetune` + classic gate | 0.598 | 0.585 | 11.6 | 305 ms |
+| | **`td_rf` (few-shot)** | 0.562 | **0.602** | **2.57** | 223 ms |
+
+Paired at 3 shots, `td_rf` against each variant (`td_rf` is seed-invariant by
+construction -- deterministic split, fixed `random_state` -- so it is replicated
+across the network's seeds):
+
+| cohort | comparison | bal acc | macro F1 | FA/min |
+| --- | --- | --- | --- | --- |
+| all 10 | vs `finetune` | -0.113 (p=1e-06) | **+0.048** (p=0.01) | **-49.4** (p=2e-06) |
+| all 10 | vs + gate | -0.092 (p=2e-06) | -0.024 (p=0.07, tied) | **-28.7** (p=2e-06) |
+| adequate | vs `finetune` | -0.054 (p=0.01) | **+0.124** (p=6e-05) | **-50.3** (p=6e-05) |
+| adequate | vs + gate | -0.036 (p=0.015) | +0.017 (p=0.25, tied) | **-9.0** (p=6e-04) |
+
+What the matched comparison says.
+
+**The network's advantage is narrow.** On the adequate cohort it is **+0.036
+balanced accuracy** over `td_rf`, and on macro F1 the two are statistically
+indistinguishable (0.585 vs 0.602, p = 0.25).
+
+**And it is expensive.** The network emits **4.5x more false activations** -- 11.6
+per minute against 2.57 -- with the best rest-handling we built attached. Without
+the gate it is 20x.
+
+**Macro F1 is where the shallow model quietly wins.** `td_rf` beats *ungated*
+`finetune` on F1 at every shot count in both cohorts while losing on balanced
+accuracy. Balanced accuracy is pure recall and never asks how often a predicted
+movement is wrong; F1 does. The network finds more movements and is less
+trustworthy when it claims one.
+
+**The cost asymmetry.** `td_rf` fits in 1-5 seconds per subject on CPU, needs no
+GPU, and loads no DB2 at all -- there is nothing to pretrain. The network needs 15
+DB2 subject-recordings, 3000 pretraining steps per seed and about 70 minutes of GPU
+time per study, for +0.036 balanced accuracy and 4.5x the unwanted movements.
+
+So the project's question has two honest answers that have to be given together.
+Yes, a shared model does adapt to a new amputee from a few examples, and it works
+better than it appeared before the budget was selected properly -- 3 shots reaches
+86% of full per-subject training, up from 68%. And no, on this evidence it is not
+what you would ship: against the cheap alternative given the same data, the margin
+is 0.036 balanced accuracy, no F1 advantage, 4.5x the false activations and three
+orders of magnitude more compute.
 
 ### Robustness to electrode failure: hypothesis met, claim still dead
 

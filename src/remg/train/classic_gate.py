@@ -48,6 +48,65 @@ class ClassicGateConfig:
 
 
 @dataclass
+class ClassicModel:
+    """A fitted td_rf, binary or multiclass, with the deadzone it was fitted with."""
+
+    pipe: object | None
+    zc_threshold: np.ndarray | None
+    seconds: float
+    degenerate: bool
+    classes: int
+
+    def describe(self) -> str:
+        if self.degenerate:
+            return "td_rf not fitted (calibration had fewer than two classes)"
+        return f"td_rf over {self.classes} classes"
+
+
+def fit_td_rf(
+    calib: WindowSet,
+    *,
+    n_estimators: int = 300,
+    random_state: int = 0,
+    class_balanced: bool = False,
+    binary: bool = False,
+    rest_index: int = 0,
+) -> ClassicModel:
+    """Fit a random forest on time-domain features of one subject's windows.
+
+    `binary=True` collapses the targets to rest vs movement, which is stage 1 of the
+    hybrid controller. `binary=False` fits the full movement set, which is the
+    classic baseline in its own right -- the same model the literature benchmark
+    runs, so the two are directly comparable rather than merely similar.
+
+    The deadzone and the feature scaler are both fitted here, on calibration data
+    only: a statistic taken from the evaluation windows is a leak however small.
+    """
+    t0 = time.time()
+    y = (calib.y != rest_index).astype(np.int64) if binary else calib.y
+    if len(np.unique(y)) < 2:
+        return ClassicModel(None, None, time.time() - t0, True, int(len(np.unique(y))))
+    zc = fit_zc_threshold(calib.X)
+    pipe = make_pipeline(
+        StandardScaler(),
+        RandomForestClassifier(
+            n_estimators=n_estimators,
+            random_state=random_state,
+            class_weight="balanced" if class_balanced else None,
+        ),
+    )
+    pipe.fit(td_features(calib.X, zc), y)
+    return ClassicModel(pipe, zc, time.time() - t0, False, int(len(np.unique(y))))
+
+
+def predict_td_rf(ws: WindowSet, model: ClassicModel) -> np.ndarray:
+    """Hard labels in the original label space."""
+    if model.degenerate or model.pipe is None:
+        raise ValueError("cannot predict with a degenerate td_rf")
+    return model.pipe.predict(td_features(ws.X, model.zc_threshold))
+
+
+@dataclass
 class ClassicGateResult:
     pipe: object | None
     zc_threshold: np.ndarray | None
@@ -72,23 +131,10 @@ def fit_classic_gate(
     statistic taken from the evaluation windows is a leak however small.
     """
     cfg = cfg or ClassicGateConfig()
-    t0 = time.time()
-    is_move = (calib.y != cfg.rest_index).astype(np.int64)
-    if len(np.unique(is_move)) < 2:
-        return ClassicGateResult(None, None, cfg.threshold, time.time() - t0, True)
-
-    zc = fit_zc_threshold(calib.X)
-    feats = td_features(calib.X, zc)
-    pipe = make_pipeline(
-        StandardScaler(),
-        RandomForestClassifier(
-            n_estimators=cfg.n_estimators,
-            random_state=cfg.random_state,
-            class_weight="balanced" if cfg.class_balanced else None,
-        ),
-    )
-    pipe.fit(feats, is_move)
-    return ClassicGateResult(pipe, zc, cfg.threshold, time.time() - t0, False)
+    m = fit_td_rf(calib, n_estimators=cfg.n_estimators, random_state=cfg.random_state,
+                  class_balanced=cfg.class_balanced, binary=True,
+                  rest_index=cfg.rest_index)
+    return ClassicGateResult(m.pipe, m.zc_threshold, cfg.threshold, m.seconds, m.degenerate)
 
 
 def classic_gate_scores(ws: WindowSet, result: ClassicGateResult) -> np.ndarray:
