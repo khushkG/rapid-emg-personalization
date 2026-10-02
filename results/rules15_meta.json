@@ -1,0 +1,133 @@
+{
+  "source": "DB2",
+  "target": "DB3",
+  "source_subjects": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "target_subjects": [
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+  ],
+  "excluded_target_subjects": [
+    1
+  ],
+  "documented_exclusions": {
+    "DB3-S1": "DB3: 1 subject(s) excluded\n  S1: performed only 12 of the 23 grasping movements (global ids 18-29), so the recording contains no tripod grasp (30) and no lateral grasp (34). The few-shot conditions require a calibration example of every movement in DEFAULT_SUBSET, and this subject can supply none for those two. Verified with scripts/inspect_data.py; the other 9 DB3 subjects checked carry all 12."
+  },
+  "classes": [
+    "rest",
+    "open_hand",
+    "close_hand",
+    "point_index",
+    "wrist_supination",
+    "wrist_pronation",
+    "wrist_flexion",
+    "wrist_extension",
+    "large_diameter_grasp",
+    "medium_wrap",
+    "tripod_grasp",
+    "lateral_grasp"
+  ],
+  "movement_ids": [
+    0,
+    5,
+    6,
+    7,
+    9,
+    10,
+    13,
+    14,
+    18,
+    22,
+    30,
+    34
+  ],
+  "shots": [
+    1,
+    2,
+    3
+  ],
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "pretrain_steps": 3000,
+  "preprocess": {
+    "notch_hz": null,
+    "target_fs": 1000
+  },
+  "calibration_class_balanced": true,
+  "adapt_budget_source": "results/budget_chosen.json",
+  "adapt_config": {
+    "finetune_steps": 300,
+    "finetune_lr": 0.0003,
+    "probe_steps": 600,
+    "probe_lr": 0.003,
+    "rapid_steps": 1200,
+    "rapid_lr": 0.001,
+    "drift_weight": 0.05,
+    "batch_size": 128,
+    "class_balanced": true,
+    "seed": 0
+  },
+  "window": {
+    "length_ms": 200.0,
+    "stride_ms": 100.0
+  },
+  "two_stage": true,
+  "gate_threshold_source": "results/gate_chosen.json",
+  "gate_thresholds": {
+    "finetune": 0.2,
+    "linear_probe": 0.2,
+    "rapid": 0.3
+  },
+  "rules_source": "results/rules_chosen.json",
+  "debounce_n": {
+    "finetune": 3,
+    "linear_probe": 3,
+    "rapid": 3,
+    "none": 3
+  },
+  "debounce_n_overridden": true,
+  "debounce_n_selected_on_source": {
+    "finetune": 1,
+    "linear_probe": 1,
+    "rapid": 1
+  },
+  "debounce_added_latency_ms": {
+    "finetune": 200.0,
+    "linear_probe": 200.0,
+    "rapid": 200.0,
+    "none": 200.0
+  },
+  "classic_gate": true,
+  "classic_gate_thresholds": {
+    "finetune": 0.3,
+    "linear_probe": 0.3,
+    "rapid": 0.3
+  },
+  "elapsed_seconds": 4113.3
+}

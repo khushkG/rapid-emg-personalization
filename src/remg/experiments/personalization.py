@@ -27,8 +27,14 @@ from ..data.normalize import normalize_per_subject
 from ..data.splits import calibration_split, recency_partition, subjects
 from ..data.windows import WindowSet
 from ..evaluate.metrics import rejection_curve, rest_metrics, score
+from ..evaluate.temporal import debounce
 from ..evaluate.robustness import channel_failure_sweep
 from ..train.adapt import CONDITIONS, AdaptConfig, adapt
+from ..train.classic_gate import (
+    ClassicGateConfig,
+    classic_gate_scores,
+    fit_classic_gate,
+)
 from ..train.pretrain import PretrainConfig, pretrain
 from ..train.twostage import (
     GateConfig,
@@ -65,6 +71,15 @@ class ExperimentConfig:
     two_stage: bool = True
     gate_thresholds: dict[str, float] = field(default_factory=dict)
     gate: GateConfig = field(default_factory=GateConfig)
+    # Debounce: emit a movement only after it is predicted N windows running.
+    # Per condition, selected on held-out source subjects (scripts/tune_rules.py).
+    # Absent or 1 means no debounce.
+    debounce_n: dict[str, int] = field(default_factory=dict)
+    # Classic rest gate: td_rf on time-domain features as stage 1, the adapted
+    # network's movement argmax as stage 2. Thresholds also from held-out source.
+    classic_gate: bool = True
+    classic_gate_thresholds: dict[str, float] = field(default_factory=dict)
+    classic_gate_cfg: ClassicGateConfig = field(default_factory=ClassicGateConfig)
     # Window stride, needed to turn window counts into wall-clock for the
     # false-activation event rate. Must match the WindowConfig used to segment.
     stride_samples: int = 100
@@ -113,6 +128,16 @@ def run(
                 calib_n = stats.apply(split.calib)
                 test_n = stats.apply(split.test)
 
+                # Stage 1 of the classic gate reads raw calibration windows, not
+                # the network, so it is fitted once per calibration set rather than
+                # refitted identically for each condition.
+                cgate = None
+                p_move_classic = None
+                if cfg.classic_gate:
+                    cgate = fit_classic_gate(calib_n, cfg.classic_gate_cfg)
+                    if not cgate.degenerate:
+                        p_move_classic = classic_gate_scores(test_n, cgate)
+
                 for condition in cfg.conditions:
                     acfg = AdaptConfig(**{**cfg.adapt.__dict__, "seed": seed})
                     res = adapt(base, calib_n, condition, device, acfg, split.calib_reps)
@@ -140,6 +165,7 @@ def run(
                         "updated_params": res.updated_params,
                         "stage": "single",
                         "gate_threshold": float("nan"),
+                        "debounce_n": 1,
                         **sc.as_row(),
                         **rm.as_row(),
                     }
@@ -152,35 +178,70 @@ def run(
                             flush=True,
                         )
 
+                    # Every decision rule below is a post-hoc transform of the
+                    # predictions already computed, so the whole comparison costs
+                    # two extra forward passes rather than one run per rule. All of
+                    # them are causal except the logistic/classic gates' reliance on
+                    # per-window scores, which are themselves causal.
+                    rest_i = cfg.gate.rest_index
+                    n_deb = int(cfg.debounce_n.get(condition, 1))
+                    variants: dict[str, np.ndarray] = {}
+
+                    def _deb(p):
+                        return debounce(p, start=test_n.start, group=rest_group,
+                                        n=n_deb, stride_samples=cfg.stride_samples,
+                                        rest_index=rest_i)
+
+                    if n_deb > 1:
+                        variants["debounce"] = _deb(pred)
+
                     if cfg.two_stage:
-                        # Stage 1 learns that rest is common (natural prior);
-                        # stage 2 is the same class-balanced head with rest taken
-                        # out of the argmax. Threshold from held-out DB2.
                         tau = cfg.gate_thresholds.get(condition, cfg.gate.threshold)
                         gate = fit_gate(res.model, calib_n, device, cfg.gate)
                         if not gate.degenerate:
                             p_move = gate_scores(res.model, test_n, device, gate)
-                            mv = _argmax_excluding_rest(proba, cfg.gate.rest_index)
-                            tpred = apply_threshold(p_move, mv, tau, cfg.gate.rest_index)
-                            tsc = score(test_n.y, tpred, test_n.class_names)
-                            trm = rest_metrics(test_n.y, tpred, start=test_n.start,
-                                               group=rest_group,
-                                               stride_samples=cfg.stride_samples,
-                                               fs=test_n.fs)
-                            rows.append({**base_row, "stage": "two_stage",
-                                         "gate_threshold": float(tau),
-                                         "gate_params": gate.gate_params,
-                                         "adapt_seconds": res.seconds + gate.seconds,
-                                         **tsc.as_row(), **trm.as_row()})
-                            if verbose:
-                                print(f"      two-stage tau={tau:.2f}: "
-                                      f"bal {tsc.balanced_accuracy:.3f} "
-                                      f"(single {sc.balanced_accuracy:.3f})  "
-                                      f"false-activation {trm.false_activation_rate:.3f} "
-                                      f"(single {rm.false_activation_rate:.3f})",
-                                      flush=True)
+                            mv = _argmax_excluding_rest(proba, rest_i)
+                            variants["two_stage"] = apply_threshold(p_move, mv, tau, rest_i)
+                            if n_deb > 1:
+                                variants["two_stage+debounce"] = _deb(variants["two_stage"])
                         elif verbose:
                             print(f"      two-stage skipped: {gate.describe()}", flush=True)
+
+                    if p_move_classic is not None:
+                        ctau = cfg.classic_gate_thresholds.get(
+                            condition, cfg.classic_gate_cfg.threshold)
+                        mv = _argmax_excluding_rest(proba, rest_i)
+                        variants["classic_gate"] = apply_threshold(
+                            p_move_classic, mv, ctau, rest_i)
+                        if n_deb > 1:
+                            variants["classic_gate+debounce"] = _deb(variants["classic_gate"])
+
+                    for name, vpred in variants.items():
+                        vsc = score(test_n.y, vpred, test_n.class_names)
+                        vrm = rest_metrics(test_n.y, vpred, start=test_n.start,
+                                           group=rest_group,
+                                           stride_samples=cfg.stride_samples,
+                                           fs=test_n.fs)
+                        extra = {}
+                        if "two_stage" in name:
+                            extra["gate_threshold"] = float(
+                                cfg.gate_thresholds.get(condition, cfg.gate.threshold))
+                        if "classic_gate" in name:
+                            extra["gate_threshold"] = float(
+                                cfg.classic_gate_thresholds.get(
+                                    condition, cfg.classic_gate_cfg.threshold))
+                        if "debounce" in name:
+                            extra["debounce_n"] = n_deb
+                        rows.append({**base_row, "stage": name, **extra,
+                                     **vsc.as_row(), **vrm.as_row()})
+                        if verbose:
+                            print(f"      {name:<22} bal {vsc.balanced_accuracy:.3f} "
+                                  f"F1 {vsc.macro_f1:.3f}  "
+                                  f"FA/min {vrm.false_activations_per_min:5.1f}  "
+                                  f"burst {vrm.mean_false_burst_ms:6.1f}ms  "
+                                  f"(single bal {sc.balanced_accuracy:.3f} "
+                                  f"FA/min {rm.false_activations_per_min:.1f})",
+                                  flush=True)
 
                     if cfg.recency_split:
                         # Same predictions, regrouped by how long after calibration

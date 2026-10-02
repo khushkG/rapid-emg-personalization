@@ -20,7 +20,7 @@ digital hand.
 | Pretraining with episodic meta-learning | done |
 | Four personalization conditions | done |
 | Metrics, sensor-failure sweep, rejection curves | done; **run on real data** (see Results) |
-| Protocol test suite (166 tests) | passing |
+| Protocol test suite (179 tests) | passing |
 | NinaPro DB2/DB3/DB6 loader | run against real DB2 and DB3 files; label-numbering bug found and fixed |
 | Movement subset | verified against the official movement list (one id was wrong — see Scope notes) |
 | Cross-repetition session proxy | done |
@@ -33,6 +33,7 @@ digital hand.
 | Benchmark against the published DB3 protocol | done: classic baselines reproduce the literature, so the pipeline is sound (`scripts/benchmark.py`) |
 | Adaptation budget selected on held-out DB2 | done: every hand-set default was near the bottom of its grid (`scripts/tune_budget.py`) |
 | Rest handling / false-activation rate | measured for every method; two-stage gate halves the rate but not the event count (`remg/train/twostage.py`, `scripts/tune_gate.py`) |
+| Decision rules: debounce, classic `td_rf` gate | done; debounce fails its own accuracy goal, the classic gate beats the logistic one (`remg/evaluate/temporal.py`, `scripts/tune_rules.py`) |
 
 Everything runs end-to-end today on synthetic data:
 
@@ -281,6 +282,83 @@ a threshold chosen where the rate is 0.295 is systematically too permissive wher
 it is 0.550, which is the honest price of not touching the test cohort. And
 `none` + gate is not "no personalization" -- the gate is fitted on calibration
 windows -- so that row is a reference, not a control.
+
+### Decision rules: debounce, and a classic gate
+
+Two further attempts at the false-activation problem, both operating points, both
+selected on held-out DB2 with goals fixed before the sweeps ran
+(`scripts/tune_rules.py`). DB3 plays no part.
+
+**Debounce** (`remg/evaluate/temporal.py`) emits a movement only after it has been
+predicted N windows running, and rest otherwise. It is strictly causal -- window i
+is decided from i-n+1..i and nothing later -- so unlike the centred majority vote
+used in the benchmark it could run on a device. Return to rest is immediate; only
+activation is delayed, because a hand that keeps moving is the hazard. Goal:
+minimise false activations per minute subject to balanced accuracy staying within
+0.03 of undebounced.
+
+It failed that goal. No N > 1 qualified -- even N = 2 costs 0.069 balanced accuracy
+on DB2 -- so **N = 1, no debounce, was selected**. The rule works mechanically but
+charges roughly 0.04 balanced accuracy per 100 ms of added onset latency:
+
+| N | bal acc | macro F1 | FA/min | added latency |
+| --- | --- | --- | --- | --- |
+| **1** | **0.665** | 0.560 | 47.4 | 0 ms |
+| 2 | 0.597 | 0.584 | 36.9 | 100 ms |
+| 3 | 0.541 | 0.582 | 18.2 | 200 ms |
+| 8 | 0.367 | 0.467 | 2.5 | 700 ms |
+
+**A classic gate** (`remg/train/classic_gate.py`) uses the benchmark's own `td_rf`
+-- 300 trees on MAV/RMS/WL/ZC/SSC from `remg.features`, natural class balance --
+as stage 1, with the adapted network's movement argmax as stage 2. The motivation
+is the benchmark measurement: `td_rf` reaches 0.982 rest recall where the CNN
+manages 0.505, so each model does the thing it is demonstrably good at.
+
+It beats the logistic gate on every axis. One structural property worth noting:
+because stage 1 does not depend on stage 2, a gate decouples rest behaviour from
+the movement classifier entirely -- the rest metrics are identical across
+conditions.
+
+**Results, `finetune` at 3 shots.** Reported twice: all 10 subjects, and the 5 whose
+active/rest EMG amplitude ratio is >= 2.0. That threshold was **chosen after seeing
+the signal-quality data** (`results/db3_signal_quality.csv`), so it is post-hoc
+stratification for reporting, not a pre-registered criterion; the measured values
+split 1.00/1.14/1.21/1.33/1.48 against 3.03/4.09/4.12/4.21/5.17/6.29, so the cut
+lands in a wide empty gap. Adequate: S2, S3, S8, S9, S11.
+
+| cohort | rule | bal acc | macro F1 | FA/min | mean burst |
+| --- | --- | --- | --- | --- | --- |
+| all 10 | single | **0.506** | 0.383 | 54.3 | 597 ms |
+| | debounce N=3 (not selected) | 0.387 | 0.392 | 33.0 | 375 ms |
+| | two_stage (logistic) | 0.481 | 0.442 | 49.9 | 289 ms |
+| | **classic_gate (td_rf)** | 0.484 | **0.455** | **33.5** | 384 ms |
+| | classic_gate+debounce | 0.360 | 0.417 | **11.0** | 287 ms |
+| adequate (5) | single | **0.616** | 0.478 | 52.9 | 469 ms |
+| | debounce N=3 (not selected) | 0.484 | 0.493 | 28.1 | 420 ms |
+| | two_stage (logistic) | 0.597 | 0.566 | 27.0 | 223 ms |
+| | **classic_gate (td_rf)** | 0.598 | **0.585** | **11.6** | 305 ms |
+| | classic_gate+debounce | 0.463 | 0.546 | **3.1** | 290 ms |
+
+Against no gate on the adequate cohort, `classic_gate` cuts false activations
+**52.9 -> 11.6 per minute (78%)** for 0.018 balanced accuracy, with macro F1 up
+0.107. Against the logistic gate it is better on balanced accuracy (p = 0.03),
+macro F1 (p = 7e-06) and events (p = 2e-06).
+
+**Debounce is strictly the worse way to buy rest safety here.** At N = 3 it costs
+0.119 balanced accuracy to reach the same event rate the classic gate reaches for
+0.021.
+
+**Filtering by signal quality changes every magnitude and no ranking.** The gate is
+twice as effective on adequate subjects (78% event cut against 38%), because stage
+1 cannot detect activation in a recording where attempting to move barely changes
+amplitude -- S7's ratio is 1.00. Balanced accuracy rises 0.506 -> 0.616. Half this
+cohort is recordings in which the question is close to unanswerable.
+
+**An artifact to read carefully.** Mean burst length *rises* as events fall:
+`classic_gate` has longer bursts than `two_stage` (384 vs 289 ms, p = 2e-09)
+despite a third fewer of them. Any rule that suppresses brief activations leaves
+the long ones behind, so burst length must be read next to the event count, never
+alone.
 
 ### Robustness to electrode failure: hypothesis met, claim still dead
 

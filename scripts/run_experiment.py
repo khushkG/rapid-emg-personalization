@@ -122,6 +122,18 @@ def main() -> None:
                          "Without it the gate runs at 0.5, which is an unchosen default.")
     ap.add_argument("--no-two-stage", action="store_true",
                     help="skip the rest-gate evaluation")
+    ap.add_argument("--rules", type=Path,
+                    help="JSON written by scripts/tune_rules.py holding the debounce "
+                         "length N and the classic-gate threshold per condition, both "
+                         "selected on held-out SOURCE subjects.")
+    ap.add_argument("--no-classic-gate", action="store_true",
+                    help="skip the td_rf classic rest gate")
+    ap.add_argument("--debounce-n", type=int,
+                    help="Override the debounce length from --rules for every condition. "
+                         "Use only to report a labelled operating point that the "
+                         "pre-stated selection goal did not choose -- the override is "
+                         "recorded in the meta file so a reader can tell the difference "
+                         "between a selected value and a demonstration.")
     ap.add_argument("--tag", default="run", help="prefix for the output files")
     ap.add_argument("--out", type=Path, default=Path("results"))
     args = ap.parse_args()
@@ -199,6 +211,32 @@ def main() -> None:
                 print(f"  {cond:<13} tau={entry['threshold']:.2f}{note}")
         print("  selected on held-out source subjects; DB3 played no part\n", flush=True)
 
+    debounce_n: dict[str, int] = {}
+    classic_tau: dict[str, float] = {}
+    if args.rules:
+        raw = json.loads(args.rules.read_text())
+        for cond, entry in raw.items():
+            if not isinstance(entry, dict):
+                continue
+            if "debounce_n" in entry:
+                debounce_n[cond] = int(entry["debounce_n"])
+            if isinstance(entry.get("classic_gate"), dict):
+                classic_tau[cond] = float(entry["classic_gate"]["threshold"])
+        print("decision rules from", args.rules)
+        for cond in sorted(set(debounce_n) | set(classic_tau)):
+            n = debounce_n.get(cond, 1)
+            lat = (n - 1) * wcfg.stride_ms
+            print(f"  {cond:<13} debounce N={n} (+{lat:.0f} ms onset latency)"
+                  f"   classic gate tau={classic_tau.get(cond, float('nan')):.2f}")
+        print("  selected on held-out source subjects; DB3 played no part", flush=True)
+    if args.debounce_n:
+        for cond in ("none", "linear_probe", "finetune", "rapid"):
+            debounce_n[cond] = args.debounce_n
+        print(f"  debounce N OVERRIDDEN to {args.debounce_n} for every condition "
+              f"(+{(args.debounce_n - 1) * wcfg.stride_ms:.0f} ms latency) -- a labelled "
+              f"operating point, not the one the selection goal chose", flush=True)
+    print("", flush=True)
+
     cfg = ExperimentConfig(
         shots=tuple(args.shots),
         seeds=tuple(args.seeds),
@@ -208,6 +246,9 @@ def main() -> None:
         rejection=not args.no_rejection,
         two_stage=not args.no_two_stage,
         gate_thresholds=gate_thresholds,
+        debounce_n=debounce_n,
+        classic_gate=not args.no_classic_gate,
+        classic_gate_thresholds=classic_tau,
         stride_samples=int(round(wcfg.stride_ms * pcfg.target_fs / 1000)),
     )
 
@@ -241,6 +282,16 @@ def main() -> None:
         "gate_threshold_source": str(args.gate) if args.gate
             else ("GateConfig default 0.5 (not selected)" if cfg.two_stage else None),
         "gate_thresholds": gate_thresholds,
+        "rules_source": str(args.rules) if args.rules else None,
+        "debounce_n": debounce_n,
+        "debounce_n_overridden": bool(args.debounce_n),
+        "debounce_n_selected_on_source": (
+            {k: int(v["debounce_n"]) for k, v in json.loads(args.rules.read_text()).items()
+             if isinstance(v, dict) and "debounce_n" in v} if args.rules else {}),
+        "debounce_added_latency_ms": {k: (v - 1) * wcfg.stride_ms
+                                      for k, v in debounce_n.items()},
+        "classic_gate": cfg.classic_gate,
+        "classic_gate_thresholds": classic_tau,
         "elapsed_seconds": round(elapsed, 1),
     }
     (args.out / f"{args.tag}_meta.json").write_text(json.dumps(meta, indent=2))
