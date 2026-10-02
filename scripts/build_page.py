@@ -20,20 +20,12 @@ import numpy as np
 import pandas as pd
 
 from remg.data.movements import DB6_GRASP_SET
-from remg.viz.hand import POSES, pose_geometry
 
-# Must match scripts/make_gif.py -- arbitrary, maximally distinguishable, and not a
-# claim about grasp identity (no source states which id is which).
-DB6_POSE = {
-    "rest": "rest",
-    "db6_movement_1": "close_hand",
-    "db6_movement_3": "open_hand",
-    "db6_movement_4": "point_index",
-    "db6_movement_6": "wrist_flexion",
-    "db6_movement_9": "wrist_extension",
-    "db6_movement_10": "wrist_supination",
-    "db6_movement_11": "wrist_pronation",
-}
+# Class index -> the letter used on screen and in the sprite filenames. The hands are
+# the same 3D renders the GIF uses, pre-rendered per (pose, tint) so the page stays a
+# single self-contained file with no three.js at view time.
+LETTERS = ["rest", "A", "B", "C", "D", "E", "F", "G"]
+SPRITE_DIR = Path("assets/render/sprites")
 METHODS = [
     ("finetune", "standard fine-tuning"),
     ("rapid", "rapid personalization"),
@@ -48,21 +40,18 @@ SUBJECT_NOTE = {
     6: "S6 — closest to the cohort average",
 }
 
-VB = (-1.55, -1.25, 3.10, 3.10)          # x, y, w, h in hand coordinates
-
-
-def svg_paths(pose_name: str) -> dict:
-    """Pose geometry as SVG path strings, y flipped for screen coordinates."""
-    geo = pose_geometry(POSES[pose_name])
-
-    def path(pts: np.ndarray, close: bool) -> str:
-        d = " ".join(f"{'M' if i == 0 else 'L'}{x:.3f},{-y:.3f}"
-                     for i, (x, y) in enumerate(pts))
-        return d + (" Z" if close else "")
-
-    return {"palm": path(geo["palm"], True),
-            "fingers": [path(geo[f], False)
-                        for f in ("thumb", "index", "middle", "ring", "little")]}
+def sprites() -> dict:
+    """Every (pose, tint) hand as an inline data URI."""
+    out: dict[str, dict[str, str]] = {}
+    for i, key in enumerate(LETTERS):
+        out[key] = {}
+        for tint in ("neutral", "good", "bad"):
+            p = SPRITE_DIR / f"{key}_{tint}.png"
+            if not p.exists():
+                raise SystemExit(f"missing sprite {p} -- run scripts/render_pose_sprites.py")
+            out[key][tint] = ("data:image/png;base64,"
+                              + base64.b64encode(p.read_bytes()).decode("ascii"))
+    return out
 
 
 def main() -> None:
@@ -84,9 +73,10 @@ def main() -> None:
     d = pd.read_csv(args.preds)
     summ = pd.read_csv(args.summary)
 
-    poses = {c: svg_paths(DB6_POSE[c]) for c in classes}
-    short = {c: ("rest" if c == "rest" else f"movement {c.split('_')[-1]}")
-             for c in classes}
+    sprite = sprites()
+    short = {i: ("rest" if LETTERS[i] == "rest" else f"Grasp {LETTERS[i]}")
+             for i in range(len(classes))}
+    letter = {i: LETTERS[i] for i in range(len(classes))}
 
     seqs: dict = {}
     accs: dict = {}
@@ -118,10 +108,10 @@ def main() -> None:
     def b64(p: Path) -> str:
         return base64.b64encode(p.read_bytes()).decode("ascii")
 
-    data = {"classes": classes, "short": short, "poses": poses, "seqs": seqs,
-            "accs": accs, "methods": METHODS,
+    data = {"classes": classes, "short": short, "letter": letter, "sprite": sprite,
+            "seqs": seqs, "accs": accs, "methods": METHODS,
             "subjects": [[s, SUBJECT_NOTE.get(s, f"S{s}")] for s in args.subjects],
-            "vb": list(VB), "grasps": list(DB6_GRASP_SET)}
+            "grasps": list(DB6_GRASP_SET)}
 
     html = PAGE.replace("__DATA__", json.dumps(data, separators=(",", ":")))
     html = html.replace("__CHART__", b64(args.chart))
@@ -162,7 +152,9 @@ button:hover{border-color:#c9c9c4}
 .panel{border:1px solid var(--line);border-radius:10px;padding:16px;background:#fff;min-width:0}
 .panel h3{margin:0 0 2px;font-size:15px;font-weight:600}
 .panel .sub{font-size:13px;color:var(--ink2);margin-bottom:8px}
-svg{width:100%;height:auto;display:block}
+img.hand{width:auto;height:300px;max-width:100%;display:block;margin:0 auto;
+border:none;border-radius:0;image-rendering:auto}
+@media (max-width:720px){img.hand{height:220px}}
 .verdict{font-size:14px;font-weight:600;margin-top:6px;min-height:1.5em}
 .scrub{width:100%;margin-top:14px}
 table{border-collapse:collapse;width:100%;font-size:14.5px;margin:10px 0 6px}
@@ -233,10 +225,10 @@ person, a method, and a day.</p>
 </div>
 
 <div class="stage">
-  <div class="panel"><h3>Cued</h3><div class="sub" id="cue-name">—</div>
-    <svg id="cue" viewBox="0 0 1 1" aria-label="the movement the person was asked to make"></svg></div>
+  <div class="panel"><h3>Intended</h3><div class="sub" id="cue-name">—</div>
+    <img id="cue" class="hand" alt="the movement the person was asked to make"></div>
   <div class="panel"><h3>Decoded</h3><div class="sub" id="dec-name">—</div>
-    <svg id="dec" viewBox="0 0 1 1" aria-label="the movement the model commanded"></svg>
+    <img id="dec" class="hand" alt="the movement the model commanded">
     <div class="verdict" id="verdict"></div></div>
 </div>
 <input class="scrub" id="scrub" type="range" min="0" max="1" value="0" step="1"
@@ -257,9 +249,13 @@ output, cued labels, and summary numbers.<br><br>
 <strong>About the hand shapes.</strong> DB6's seven grasps are Large Diameter, Adducted
 Thumb, Index Finger Extension, Medium Wrap, Writing Tripod, Power Sphere and Precision
 Sphere (Palermo et al., IEEE ICORR 2017). No source consulted states which numeric
-label corresponds to which grasp, so the shapes drawn here are arbitrary but
-consistently distinguishable placeholders — chosen so you can see the decoded hand
+label corresponds to which grasp, so the poses shown here are labelled A–G and are
+arbitrary but consistently distinguishable — chosen so you can see the decoded hand
 change, not to depict a particular grasp.<br><br>
+<strong>Credits.</strong> Hand model: WebXR Input Profiles, from the W3C Immersive Web
+Working Group, used under the
+<a href="https://www.w3.org/Consortium/Legal/copyright-software">W3C Software and
+Document License</a>. Rendered with three.js (MIT).<br><br>
 <strong>Data.</strong> Atzori et al., <em>Scientific Data</em> 2014 (DB2, DB3);
 Palermo et al., IEEE ICORR 2017 (DB6).
 </div>
@@ -273,17 +269,8 @@ D.methods.forEach(([k, label]) => { if (anySeq(k)) methSel.add(new Option(label,
 function anySeq(k){ return Object.values(D.seqs).some(v => v[k]); }
 subjSel.value = "2"; methSel.value = "finetune"; daySel.value = "day5";
 
-const vb = D.vb;
-for (const id of ["cue", "dec"]) $("#"+id).setAttribute("viewBox", vb.join(" "));
-
-function drawHand(svg, cls, color){
-  const p = D.poses[cls];
-  const parts = [`<path d="${p.palm}" fill="${color?color:"#ccd4e0"}"
-     stroke="#2b3a4a" stroke-width="0.035" opacity="${color?0.92:1}"/>`];
-  for (const f of p.fingers)
-    parts.push(`<path d="${f}" fill="none" stroke="${color?color:"#2b3a4a"}"
-       stroke-width="0.17" stroke-linecap="round" stroke-linejoin="round"/>`);
-  svg.innerHTML = parts.join("");
+function drawHand(img, classIndex, tint){
+  img.src = D.sprite[D.letter[classIndex]][tint];
 }
 
 let i = 0, timer = null, playing = true;
@@ -294,10 +281,10 @@ function render(){
   const s = D.seqs[key()]; if (!s) return;
   const m = methSel.value, pred = s[m] || s.true;
   const n = s.true.length; i = ((i % n) + n) % n;
-  const t = D.classes[s.true[i]], p = D.classes[pred[i]];
+  const t = s.true[i], p = pred[i];
   const ok = t === p;
-  drawHand($("#cue"), t, null);
-  drawHand($("#dec"), p, ok ? "#1f8f5f" : "#d4351c");
+  drawHand($("#cue"), t, "neutral");
+  drawHand($("#dec"), p, ok ? "good" : "bad");
   $("#cue-name").textContent = D.short[t];
   $("#dec-name").textContent = D.short[p];
   $("#dec-name").style.color = ok ? "#1f8f5f" : "#d4351c";

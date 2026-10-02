@@ -1,0 +1,244 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;padding:0;background:#00000000}
+canvas{display:block}
+</style></head><body>
+<script type="importmap">
+{"imports":{"three":"/three/build/three.module.js"}}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "/three/examples/jsm/loaders/GLTFLoader.js";
+
+const W = 560, H = 760;
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true, preserveDrawingBuffer:true});
+renderer.setSize(W, H); renderer.setPixelRatio(1);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = false;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = null;
+
+// Three-quarter view, fixed for every pose so shapes are comparable.
+const camera = new THREE.PerspectiveCamera(30, W/H, 0.01, 100);
+
+// Soft studio lighting: a broad key, a cool fill opposite, a rim from behind.
+const key = new THREE.DirectionalLight(0xffffff, 2.6); key.position.set(0.9, 1.5, 1.6);
+const fill = new THREE.DirectionalLight(0xdce6f5, 1.0); fill.position.set(-1.6, 0.3, 0.9);
+const rim  = new THREE.DirectionalLight(0xffffff, 1.5); rim.position.set(-0.4, 1.0, -1.8);
+scene.add(key, fill, rim, new THREE.HemisphereLight(0xffffff, 0xb9bec7, 1.15));
+
+const material = new THREE.MeshStandardMaterial({
+  color: 0xd8dade, roughness: 0.72, metalness: 0.0, flatShading: false
+});
+
+let root = null, bones = {}, meshes = [];
+const FINGERS = ["index","middle","ring","pinky"];
+
+function boneName(f, seg){
+  if (f === "thumb") return seg === "metacarpal" ? "thumb-metacarpal"
+    : seg === "proximal" ? "thumb-phalanx-proximal" : "thumb-phalanx-distal";
+  return seg === "metacarpal" ? `${f}-finger-metacarpal`
+    : `${f}-finger-phalanx-${seg === "proximal" ? "proximal"
+       : seg === "intermediate" ? "intermediate" : "distal"}`;
+}
+
+const loader = new GLTFLoader();
+const gltf = await loader.loadAsync("/webxr_generic_hand_left.glb");
+root = gltf.scene;
+root.traverse(o => {
+  if (o.isBone || o.isObject3D) bones[o.name] = bones[o.name] || o;
+  if (o.isMesh || o.isSkinnedMesh){ o.material = material; meshes.push(o); o.frustumCulled = false; }
+});
+scene.add(root);
+
+// This rig is FLAT: every joint's parent is the Armature, not the preceding joint,
+// because WebXR hand models carry absolute tracked joint poses rather than a kinematic
+// chain. Rotating a knuckle therefore moves nothing downstream.
+//
+// Rather than hand-roll forward kinematics (tried, and it exploded the mesh), rebuild
+// the hierarchy once with Object3D.attach(), which reparents while preserving world
+// transform. After this a plain local rotation propagates down the finger exactly as
+// it would in any normal rig, and skinning is untouched: skeleton.bones still holds
+// the same objects and their bind inverses are world-space, so they remain valid.
+const CHAINS = {
+  thumb:  ["thumb-metacarpal","thumb-phalanx-proximal","thumb-phalanx-distal","thumb-tip"],
+  index:  ["index-finger-metacarpal","index-finger-phalanx-proximal",
+           "index-finger-phalanx-intermediate","index-finger-phalanx-distal","index-finger-tip"],
+  middle: ["middle-finger-metacarpal","middle-finger-phalanx-proximal",
+           "middle-finger-phalanx-intermediate","middle-finger-phalanx-distal","middle-finger-tip"],
+  ring:   ["ring-finger-metacarpal","ring-finger-phalanx-proximal",
+           "ring-finger-phalanx-intermediate","ring-finger-phalanx-distal","ring-finger-tip"],
+  pinky:  ["pinky-finger-metacarpal","pinky-finger-phalanx-proximal",
+           "pinky-finger-phalanx-intermediate","pinky-finger-phalanx-distal","pinky-finger-tip"],
+};
+
+const BONE_SET = {wrist: 1};
+for (const chain of Object.values(CHAINS))
+  for (const n of chain) BONE_SET[n] = 1;
+
+root.updateMatrixWorld(true);
+for (const chain of Object.values(CHAINS)){
+  let prev = bones["wrist"];
+  for (const name of chain){ prev.attach(bones[name]); prev = bones[name]; }
+}
+root.updateMatrixWorld(true);
+
+// Bind rotations, captured after reparenting, so poses are deltas from the model's
+// own rest pose and nothing depends on guessing it.
+const REST = {};
+for (const chain of Object.values(CHAINS))
+  for (const name of chain) REST[name] = bones[name].quaternion.clone();
+
+let FLEX_SIGN = -1;
+const AX_FLEX = new THREE.Vector3(1, 0, 0);
+const AX_SPREAD = new THREE.Vector3(0, 0, 1);
+const AX_OPP = new THREE.Vector3(0, 1, 0);
+const CURL_SHARE = {metacarpal: 0.06, proximal: 0.95, intermediate: 1.20, distal: 0.75};
+
+function segKind(name){
+  if (name.endsWith("metacarpal")) return "metacarpal";
+  if (name.endsWith("proximal")) return "proximal";
+  if (name.endsWith("intermediate")) return "intermediate";
+  if (name.endsWith("distal")) return "distal";
+  return null;
+}
+const tq = (ax, a) => new THREE.Quaternion().setFromAxisAngle(ax, a);
+
+function applyPose(p){
+  const fingers = ["index","middle","ring","pinky"];
+  for (let i = 0; i < fingers.length; i++){
+    const curl = p.curl[i];
+    const fan = (i - 1.5) * 0.18 * p.spread;
+    for (const name of CHAINS[fingers[i]]){
+      const kind = segKind(name); if (!kind) continue;
+      const q = REST[name].clone()
+        .multiply(tq(AX_FLEX, FLEX_SIGN * curl * CURL_SHARE[kind]));
+      if (kind === "proximal" || kind === "metacarpal")
+        q.multiply(tq(AX_SPREAD, fan * (kind === "proximal" ? 1.0 : 0.3)));
+      bones[name].quaternion.copy(q);
+    }
+  }
+  bones["thumb-metacarpal"].quaternion.copy(REST["thumb-metacarpal"].clone()
+    .multiply(tq(AX_SPREAD, -p.thumb_abd * 0.60))
+    .multiply(tq(AX_OPP, p.thumb_opp * 1.00))
+    .multiply(tq(AX_FLEX, FLEX_SIGN * p.thumb_curl * 0.20)));
+  bones["thumb-phalanx-proximal"].quaternion.copy(REST["thumb-phalanx-proximal"].clone()
+    .multiply(tq(AX_FLEX, FLEX_SIGN * p.thumb_curl * 0.85)));
+  bones["thumb-phalanx-distal"].quaternion.copy(REST["thumb-phalanx-distal"].clone()
+    .multiply(tq(AX_FLEX, FLEX_SIGN * p.thumb_curl * 0.70)));
+  root.updateMatrixWorld(true);
+}
+
+// Calibrate the flexion sign by measurement: curling must bring the fingertips
+// closer to the wrist. Assuming the axis sign produced fingers that barely moved.
+window.calibrate = () => {
+  const tips = ["index-finger-tip","middle-finger-tip","ring-finger-tip","pinky-finger-tip"];
+  const dist = () => {
+    const w = new THREE.Vector3().setFromMatrixPosition(bones["wrist"].matrixWorld);
+    let d = 0;
+    for (const t of tips)
+      d += new THREE.Vector3().setFromMatrixPosition(bones[t].matrixWorld).distanceTo(w);
+    return d / tips.length;
+  };
+  const flat = {curl:[0,0,0,0], spread:0.3, thumb_abd:0.3, thumb_curl:0, thumb_opp:0.2};
+  const closed = {curl:[1,1,1,1], spread:0.1, thumb_abd:0.2, thumb_curl:0.8, thumb_opp:0.6};
+  applyPose(flat); const open = dist();
+  FLEX_SIGN = -1; applyPose(closed); const neg = dist();
+  FLEX_SIGN =  1; applyPose(closed); const pos = dist();
+  FLEX_SIGN = (neg < pos) ? -1 : 1;
+  applyPose(flat);
+  return {open: +open.toFixed(4), neg: +neg.toFixed(4), pos: +pos.toFixed(4),
+          chosen: FLEX_SIGN};
+};
+
+// Frame the hand once, after the hierarchy is rebuilt, and never move the camera
+// again -- every pose must be seen from the same viewpoint to be comparable.
+function frameHand(){
+  root.updateMatrixWorld(true);
+  // Measure the skeleton's joints, not the SkinnedMesh bounds: a skinned mesh reports
+  // its bind-pose box, which for this model badly under-reports the real extent.
+  const pts = [];
+  for (const name of Object.keys(BONE_SET)){
+    const b = bones[name]; if (!b) continue;
+    b.updateWorldMatrix(true, false);
+    pts.push(new THREE.Vector3().setFromMatrixPosition(b.matrixWorld));
+  }
+  const box = new THREE.Box3().setFromPoints(pts);
+  const size = box.getSize(new THREE.Vector3());
+  box.expandByScalar(Math.max(size.x, size.y, size.z) * 0.22);   // flesh round the bones
+  const c = box.getCenter(new THREE.Vector3());
+  const r = box.getBoundingSphere(new THREE.Sphere()).radius;
+  root.position.sub(c);
+  root.updateMatrixWorld(true);
+  // Distance that actually fits a sphere of radius r in a 30-degree vertical fov.
+  const d = (r / Math.sin(THREE.MathUtils.degToRad(30) / 2)) * 1.08;
+  const dir = new THREE.Vector3(0.58, 0.30, 0.76).normalize();
+  camera.position.copy(dir.multiplyScalar(d));
+  // The model's fingers point along -Y, so -Y is "up" for this view. Flipping the
+  // camera's up vector avoids mirroring the mesh, which rotating the model would do.
+  camera.up.set(0, -1, 0);
+  camera.lookAt(0, 0, 0);
+  camera.updateProjectionMatrix();
+  window.__frame = {r: +r.toFixed(4), d: +d.toFixed(4),
+                    cam: camera.position.toArray().map(x => +x.toFixed(4))};
+}
+
+// Frame once over EVERY pose the clip can show, so the camera is fixed and no pose
+// can clip. Framing on one pose risks the widest one spilling out of frame.
+window.frameAll = (poses) => {
+  const pts = [];
+  for (const pose of poses){
+    applyPose(pose);
+    for (const name of Object.keys(BONE_SET)){
+      const b = bones[name]; if (!b) continue;
+      b.updateWorldMatrix(true, false);
+      pts.push(new THREE.Vector3().setFromMatrixPosition(b.matrixWorld));
+    }
+  }
+  const box = new THREE.Box3().setFromPoints(pts);
+  const size = box.getSize(new THREE.Vector3());
+  box.expandByScalar(Math.max(size.x, size.y, size.z) * 0.13);  // flesh round the bones
+  const c = box.getCenter(new THREE.Vector3());
+  const r = box.getBoundingSphere(new THREE.Sphere()).radius;
+  root.position.sub(c);
+  root.updateMatrixWorld(true);
+  const d = (r / Math.sin(THREE.MathUtils.degToRad(30) / 2)) * 0.82;
+  const dir = new THREE.Vector3(0.58, 0.26, 0.77).normalize();
+  camera.position.copy(dir.multiplyScalar(d));
+  camera.up.set(0, -1, 0);
+  camera.lookAt(0, 0, 0);
+  camera.updateProjectionMatrix();
+  window.__frame = {r: +r.toFixed(4), d: +d.toFixed(4)};
+  return window.__frame;
+};
+
+function setTint(hex){ material.color.setHex(hex); }
+
+window.renderPose = (pose, colorHex) => {
+  applyPose(pose);
+  setTint(colorHex);
+  renderer.render(scene, camera);
+  return renderer.domElement.toDataURL("image/png");
+};
+
+window.__cam = camera;
+window.__scene = scene;
+window.__root = root;
+window.project = (name) => {
+  const b = bones[name]; b.updateWorldMatrix(true, false);
+  const v = new THREE.Vector3().setFromMatrixPosition(b.matrixWorld).project(camera);
+  return [ +v.x.toFixed(3), +v.y.toFixed(3), +v.z.toFixed(3) ];
+};
+window.setCamScale = (k) => {
+  camera.position.multiplyScalar(k); camera.lookAt(0,0,0);
+  camera.updateProjectionMatrix(); return camera.position.toArray();
+};
+window.__bonesObj = bones;
+window.__calib = window.calibrate();
+frameHand();
+window.__ready = true;
+window.__bones = Object.keys(bones);
+</script></body></html>

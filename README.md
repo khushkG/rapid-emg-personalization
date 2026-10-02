@@ -561,6 +561,45 @@ One caveat on the hyperparameters: they were selected on held-out DB2 subjects f
 well-matched to DB6, and it cuts against every condition except `td_rf`, which has no
 selected hyperparameters at all.
 
+## The figures
+
+`results/visuals/` holds the shareable output, and `results/project_page.html` is a
+single self-contained page carrying all of it. None of it contains EMG: NinaPro asks
+that its papers be cited and publishes no licence permitting redistribution of the
+recordings, so every figure is built from model predictions, cued labels and summary
+numbers, from which no signal can be reconstructed.
+
+| file | what it shows |
+| --- | --- |
+| `day1_to_day5.png` | the cross-session result: five methods, day 1 to day 5, with 95% CIs |
+| `rest_timeline.png` | a minute of recording with every false activation marked, gate on and off |
+| `day1_vs_day5_hands.gif` | the same fine-tuned model decoding day 1 beside day 5 |
+| `preds_db6.csv`, `preds_db3.csv` | the per-window predictions every figure is built from |
+
+The animation uses a rendered 3D hand (three.js in headless Chromium) rather than a
+drawing. A 2D hand was tried first and abandoned: a closed hand loses its fingers
+behind the palm, and a pinch and a fist share a silhouette, so the decoded hand did not
+visibly change. See `assets/README.md`.
+
+**Hand model:** the `generic-hand` profile from
+[WebXR Input Profiles](https://github.com/immersive-web/webxr-input-profiles), by the
+W3C Immersive Web Working Group, used under the
+[W3C Software and Document License](https://www.w3.org/Consortium/Legal/copyright-software),
+notice preserved in `assets/LICENSE.webxr-input-profiles.md`. Rendered with three.js
+(MIT). The npm package for the model declares no licence field; the licence above comes
+from the project repository.
+
+**Grasps are labelled A-G, not named.** DB6's seven grasps are Large Diameter, Adducted
+Thumb, Index Finger Extension, Medium Wrap, Writing Tripod, Power Sphere and Precision
+Sphere (Palermo et al., IEEE ICORR 2017), but no source consulted states which recorded
+id is which, so the poses are arbitrary and distinguishable rather than depictions --
+see the DB6 note in `remg/data/movements.py`.
+
+**The animation's window is chosen by a rule fixed in advance**, printed on the figure:
+for each day independently, the 10-second window containing the most distinct
+*intended* grasps, earliest start breaking ties. It reads the cued labels only and
+never the predictions, so it cannot favour either day.
+
 ## Setup
 
 ```

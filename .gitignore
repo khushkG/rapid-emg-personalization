@@ -22,6 +22,12 @@ results/*
 !results/visuals/**
 !results/project_page.html
 *.pt
+# Vendored third-party render assets and intermediates. The GLB, three.js and the
+# licence notices are kept (they are what the figures were made with and the licences
+# require the notice to travel); the rendered frames are regenerable and bulky.
+assets/render/frames/
+assets/three/build/
+assets/three/examples/
 .DS_Store
 results/selfcheck_*
 results/pilot_*
