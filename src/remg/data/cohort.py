@@ -41,6 +41,18 @@ PARTIAL_RECORDINGS: dict[tuple[str, str], str] = {
         "analysis using day 2 is. Verified by direct inspection of all 20 files of "
         "DB6 S1 and S2."
     ),
+    ("DB6", "S9_D1_T1.mat"): (
+        "electrode 7 (0-indexed, and still index 7 after the padding columns 8 and 9 "
+        "are removed) is identically zero for the whole of this trial, while in every "
+        "other S9 file it carries a weak but nonzero signal -- RMS 4e-07 to 1e-05 "
+        "against about 2e-05 for its neighbour. So this is a contact failure during "
+        "trial 1 of day 1, not a dead electrode: concatenated with trial 2, day 1 has "
+        "one channel that is flat for half the session and marginal for the other half. "
+        "The loader reports it rather than dropping it, so the channel count stays 14 "
+        "and every condition sees identical inputs; the comparison between conditions is "
+        "therefore still fair. Worth knowing because day 1 is the calibration day: this "
+        "subject calibrates from effectively 13 informative electrodes."
+    ),
 }
 
 

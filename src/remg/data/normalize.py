@@ -51,20 +51,33 @@ class ChannelStats:
         )
 
 
-def normalize_per_subject(ws: WindowSet, *, robust: bool = True) -> WindowSet:
+def normalize_per_subject(
+    ws: WindowSet, *, robust: bool = True, inplace: bool = False
+) -> WindowSet:
     """Normalize each subject-session by its own statistics.
 
     Used for the *pretraining* cohort, where every window is training data, so a
     subject using its own statistics is not leakage. It removes the between-
     subject amplitude differences that would otherwise dominate the gradient and
     let the encoder waste capacity on who is wearing the sleeve.
+
+    `inplace` rewrites the caller's array instead of copying it. The cross-session
+    study holds a 3 GB window set and rebuilds a ~2.8 GB source cohort for each of
+    ten leave-one-subject-out folds; a copy at that point is the difference between
+    fitting in memory and paging. Only pass it for a window set the caller owns and
+    will not reuse unnormalized -- which is true of a fresh `select()`, since that
+    already copies.
     """
-    X = ws.X.copy()
+    X = ws.X if inplace else ws.X.copy()
     for s in np.unique(ws.subject):
         for sess in np.unique(ws.session[ws.subject == s]):
             m = (ws.subject == s) & (ws.session == sess)
+            # Masks are disjoint, so reading X[m] here is always pre-normalization
+            # even when writing in place.
             stats = fit(ws.select(m), "oracle", robust=robust)
-            X[m] = (ws.X[m] - stats.mean[None]) / stats.scale[None]
+            X[m] = (X[m] - stats.mean[None]) / stats.scale[None]
+    if inplace:
+        return ws
     return WindowSet(
         X=np.ascontiguousarray(X, dtype=np.float32),
         y=ws.y,

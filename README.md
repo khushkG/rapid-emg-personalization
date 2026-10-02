@@ -20,14 +20,15 @@ digital hand.
 | Pretraining with episodic meta-learning | done |
 | Four personalization conditions | done |
 | Metrics, sensor-failure sweep, rejection curves | done; **run on real data** (see Results) |
-| Protocol test suite (179 tests) | passing |
+| Protocol test suite (185 tests) | passing |
 | NinaPro DB2/DB3/DB6 loader | run against real DB2 and DB3 files; label-numbering bug found and fixed |
 | Movement subset | verified against the official movement list (one id was wrong — see Scope notes) |
 | Cross-repetition session proxy | done |
 | Real-data pipeline (DB2 -> DB3, end to end) | runs; `scripts/run_experiment.py` |
 | DB3 download | 11 of 11 subjects; cohort coverage verified |
 | DB2 download | 15 of 40 subjects (enough for the study) |
-| Cross-session experiment (day 1 → day 5) | needs DB6 (see Scope notes) |
+| DB6 download | 10 of 10 subjects, 20 GB; format verified against all 100 files |
+| Cross-session experiment (day 1 → day 5) | **done**: DB6, 10 subjects, 3 seeds. `rapid` passes its pre-stated criterion — and `linear_probe` retains better still (`scripts/run_crosssession.py`) |
 | Digital hand visualisation | done: `scripts/demo_hand.py` |
 | Real results | complete: clean, sensor-failure and abstention. **The proposed method does not beat the baselines on any axis measured** |
 | Benchmark against the published DB3 protocol | done: classic baselines reproduce the literature, so the pipeline is sound (`scripts/benchmark.py`) |
@@ -480,12 +481,85 @@ late held-out repetitions (-0.018 at 3 shots against -0.011 for `linear_probe`),
 consistent with the brittleness above. It is same-session drift, not re-donning,
 and too small to carry a claim.
 
-### Genuinely still open
+### Cross-session (DB6): the one scenario where `rapid` passes
 
-* **Cross session.** Fine-tuning a whole backbone on one session's electrode
-  placement is exactly what should overfit across a re-donning, and it is the
-  one scenario where a 664-parameter method has a real case. Needs DB6, which is
-  not downloaded and whose URL layout is unverified.
+Every result above is within-session -- the electrodes were never removed. Fitting
+109,317 parameters to one session's electrode placement is exactly what should
+overfit across a re-donning, and 664 adapter parameters is exactly the kind of
+constraint that should survive it. DB6 answers it: 10 intact subjects, 5 days, 7
+grasps, 14 electrodes.
+
+Self-contained study (`scripts/run_crosssession.py`), because DB6 is a different
+experiment: 14 electrodes against DB2's 12, so a DB2-pretrained encoder cannot even
+be loaded. Pretraining is **leave-one-subject-out within DB6**. Calibration uses
+repetitions of **day 1** only; each condition is then scored twice from that same
+calibration -- on day 1's held-out repetitions and on **day 5** -- because day 5
+alone cannot separate a method that retains well from one that was never good. The
+normalizer is fitted on day-1 calibration windows and never re-fitted on day 5;
+re-fitting would quietly correct the amplitude shift that re-donning causes, which
+is most of what is being measured. Every hyperparameter comes from the files
+selected on held-out DB2 subjects; nothing is tuned on DB6.
+
+**The criterion was fixed before the data existed.** `rapid` wins only if BOTH: (1)
+its day-1 -> day-5 drop is smaller than `finetune`'s by more than the seed noise
+measured in this study, with a bootstrap 95% CI on the paired difference excluding
+zero; and (2) its day-5 accuracy is not significantly worse than `finetune`'s.
+Condition 2 exists because "degrades less" is trivially satisfied by a model that
+starts bad and stays bad -- `none` passes condition 1 alone.
+
+3 shots, mean over 10 subjects x 3 seeds (n = 30), balanced accuracy:
+
+| method | day 1 | day 5 | drop | macro F1 (day 5) | FA/min (day 5) |
+| --- | --- | --- | --- | --- | --- |
+| `none` | 0.329 | 0.304 | **+0.025** | 0.262 | 24.2 |
+| `td_rf` (few-shot) | 0.386 | 0.288 | +0.098 | 0.252 | **18.1** |
+| `linear_probe` | 0.398 | 0.335 | +0.063 | 0.296 | 23.3 |
+| `finetune` | 0.389 | 0.281 | +0.108 | 0.236 | 40.3 |
+| `finetune` + classic gate | 0.393 | 0.284 | +0.109 | 0.237 | 36.1 |
+| **`rapid`** | **0.412** | **0.339** | +0.073 | **0.300** | 20.3 |
+
+**Both conditions pass.**
+
+* Condition 1: `finetune` drops 0.1082, `rapid` drops 0.0731, difference
+  **+0.0351**, bootstrap 95% CI **[+0.0193, +0.0506]** excluding zero. Seed noise
+  measured here is **0.0053**, so the effect is 6.6x run-to-run variability.
+  Wilcoxon p = 3.8e-04; `rapid` degrades less in 21 of 30.
+* Condition 2: `rapid`'s day-5 accuracy is **0.3387** against `finetune`'s 0.2811 --
+  not merely "not worse" but **+0.0576 better**, CI [+0.0352, +0.0828],
+  p = 1.8e-05, better in 25 of 30.
+
+This is the only axis in the entire project on which the proposed method wins, and
+it wins on a criterion written down in advance.
+
+**And the pre-registered failure mode fires too.** Before running, two outcomes were
+named as fatal to the broader claim: `linear_probe` matching `rapid`'s retention, or
+few-shot `td_rf` matching it. The first happened:
+
+| comparison (3 shots, n=30) | `linear_probe` | `rapid` | difference | 95% CI | p |
+| --- | --- | --- | --- | --- | --- |
+| day-5 balanced accuracy | 0.3346 | 0.3387 | +0.0041 | [-0.0055, +0.0127] | 0.17 |
+| drop (day 1 -> day 5) | **0.0631** | 0.0731 | +0.0100 (rapid worse) | [+0.0032, +0.0171] | 0.023 |
+
+A plain linear probe -- 1,548 parameters, no adapters, no episodic meta-learning --
+**retains significantly better** than `rapid` and is statistically tied with it on
+day-5 accuracy. So the mechanism is parameter count, not the adapters: what the data
+supports is *"fitting the whole backbone to one session's electrode placement is
+brittle, and touching fewer parameters is more robust"*. `rapid` is one way to touch
+fewer parameters and not the best one here. That is the same shape of result as the
+sensor-failure sweep, where `rapid` met its robustness threshold and `linear_probe`
+got the same robustness for free.
+
+`finetune` + classic gate does not help: the gate addresses rest behaviour, not
+cross-session drift, and the drop is unchanged (0.109 against 0.108). Few-shot
+`td_rf`, the strongest practical competitor within-session, degrades nearly as badly
+as `finetune` (+0.098) -- hand-crafted amplitude features are themselves sensitive to
+electrode placement.
+
+One caveat on the hyperparameters: they were selected on held-out DB2 subjects for a
+12-class, 12-channel problem, and DB6 is 8-class and 14-channel. That satisfies
+"nothing tuned on DB6" and is the honest choice, but it is not the same as being
+well-matched to DB6, and it cuts against every condition except `td_rf`, which has no
+selected hyperparameters at all.
 
 ## Setup
 

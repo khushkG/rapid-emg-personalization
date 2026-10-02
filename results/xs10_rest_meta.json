@@ -1,0 +1,70 @@
+{
+  "study": "cross-session: calibrate on day 1, evaluate on day 5",
+  "dataset": "DB6",
+  "protocol": "leave-one-subject-out within DB6; no DB2 pretraining",
+  "why_not_db2": "DB6 has 14 electrodes against DB2's 12, a different placement and a different movement set, so DB2 weights cannot be loaded let alone transferred",
+  "subjects": [
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "calib_day": 1,
+  "test_day": 5,
+  "days_segmented": [
+    1,
+    5
+  ],
+  "shots": [
+    1,
+    2,
+    3
+  ],
+  "seeds": [
+    2
+  ],
+  "pretrain_steps": 3000,
+  "classes": [
+    "rest",
+    "db6_movement_1",
+    "db6_movement_3",
+    "db6_movement_4",
+    "db6_movement_6",
+    "db6_movement_9",
+    "db6_movement_10",
+    "db6_movement_11"
+  ],
+  "db6_movement_ids": [
+    1,
+    3,
+    4,
+    6,
+    9,
+    10,
+    11
+  ],
+  "movement_names_provisional": true,
+  "expected_channels": 14,
+  "window": {
+    "length_ms": 200.0,
+    "stride_ms": 100.0
+  },
+  "preprocess": {
+    "notch_hz": null,
+    "target_fs": 1000
+  },
+  "normalizer": "fitted on day-1 calibration windows only; never re-fitted on day 5",
+  "adapt_budget_source": "results/budget_chosen.json",
+  "gate_threshold_source": "results/gate_chosen.json",
+  "rules_source": "results/rules_chosen.json",
+  "hyperparameters_selected_on": "held-out DB2 subjects; nothing tuned on DB6",
+  "partial_recordings": {
+    "S2_D2_T2.mat": "truncated: 103 s of recording against ~715 s for every other DB6 trial, containing only movement 1 (with all 12 of its repetitions) instead of the seven movements every other file carries. The session appears to have been stopped after the first movement block. Day 1 and day 5 of this subject are complete, so the day-1 -> day-5 cross-session study is unaffected; only an analysis using day 2 is. Verified by direct inspection of all 20 files of DB6 S1 and S2.",
+    "S9_D1_T1.mat": "electrode 7 (0-indexed, and still index 7 after the padding columns 8 and 9 are removed) is identically zero for the whole of this trial, while in every other S9 file it carries a weak but nonzero signal -- RMS 4e-07 to 1e-05 against about 2e-05 for its neighbour. So this is a contact failure during trial 1 of day 1, not a dead electrode: concatenated with trial 2, day 1 has one channel that is flat for half the session and marginal for the other half. The loader reports it rather than dropping it, so the channel count stays 14 and every condition sees identical inputs; the comparison between conditions is therefore still fair. Worth knowing because day 1 is the calibration day: this subject calibrates from effectively 13 informative electrodes."
+  },
+  "success_criterion": "rapid wins only if BOTH: (1) its day1->day5 balanced-accuracy drop is smaller than finetune's by more than the seed noise measured in this study, bootstrap 95% CI on the paired difference excluding zero; and (2) its day-5 balanced accuracy is not significantly worse than finetune's, Wilcoxon p > 0.05 with the CI containing zero. Stated before the data existed.",
+  "elapsed_seconds": 2609.5,
+  "device": "mps"
+}
