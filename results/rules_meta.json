@@ -1,0 +1,128 @@
+{
+  "purpose": "debounce N and classic-gate threshold, selected on held-out DB2 only",
+  "dataset": "DB2",
+  "pretrain_subjects": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+  ],
+  "selection_subjects": [
+    12,
+    13,
+    14,
+    15
+  ],
+  "db3_loaded": false,
+  "encoder_checkpoint": "results/db2_encoder.pt",
+  "debounce_grid": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    8
+  ],
+  "gate_threshold_grid": [
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9
+  ],
+  "debounce_objective": "minimise false activations per minute subject to balanced accuracy >= undebounced - 0.03",
+  "classic_gate_objective": "maximise balanced accuracy subject to false_activation_rate <= 0.1",
+  "classic_gate_model": "StandardScaler + RandomForest(n_estimators=300, random_state=0) on MAV/RMS/WL/ZC/SSC; natural class balance",
+  "debounce_is_causal": true,
+  "window": {
+    "length_ms": 200.0,
+    "stride_ms": 100.0
+  },
+  "shots": [
+    1,
+    3
+  ],
+  "seeds": [
+    0
+  ],
+  "adapt_budget_source": "results/budget_chosen.json",
+  "chosen": {
+    "finetune": {
+      "debounce_n": 1,
+      "debounce": {
+        "n": 1,
+        "bal_tolerance": 0.03,
+        "undebounced_balanced_accuracy": 0.6651278191957813,
+        "val_balanced_accuracy": 0.6651278191957813,
+        "val_false_activations_per_min": 47.350598566228875,
+        "val_false_activation_rate": 0.28015933532042475,
+        "added_latency_ms": 0.0
+      },
+      "classic_gate": {
+        "threshold": 0.3,
+        "far_budget": 0.1,
+        "budget_met": true,
+        "val_balanced_accuracy": 0.6381887837309587,
+        "val_false_activation_rate": 0.07376407208536101,
+        "val_rest_recall": 0.926235927914639,
+        "val_false_activations_per_min": 14.310417490596326
+      }
+    },
+    "linear_probe": {
+      "debounce_n": 1,
+      "debounce": {
+        "n": 1,
+        "bal_tolerance": 0.03,
+        "undebounced_balanced_accuracy": 0.5685140873999716,
+        "val_balanced_accuracy": 0.5685140873999716,
+        "val_false_activations_per_min": 62.958201232377995,
+        "val_false_activation_rate": 0.44106207240788536,
+        "added_latency_ms": 0.0
+      },
+      "classic_gate": {
+        "threshold": 0.3,
+        "far_budget": 0.1,
+        "budget_met": true,
+        "val_balanced_accuracy": 0.5558617966682312,
+        "val_false_activation_rate": 0.07376407208536101,
+        "val_rest_recall": 0.926235927914639,
+        "val_false_activations_per_min": 14.310417490596326
+      }
+    },
+    "rapid": {
+      "debounce_n": 1,
+      "debounce": {
+        "n": 1,
+        "bal_tolerance": 0.03,
+        "undebounced_balanced_accuracy": 0.5352594996362158,
+        "val_balanced_accuracy": 0.5352594996362158,
+        "val_false_activations_per_min": 41.96588410457486,
+        "val_false_activation_rate": 0.20839057736170835,
+        "added_latency_ms": 0.0
+      },
+      "classic_gate": {
+        "threshold": 0.3,
+        "far_budget": 0.1,
+        "budget_met": true,
+        "val_balanced_accuracy": 0.5274345969473787,
+        "val_false_activation_rate": 0.07376407208536101,
+        "val_rest_recall": 0.926235927914639,
+        "val_false_activations_per_min": 14.310417490596326
+      }
+    }
+  },
+  "elapsed_seconds": 356.7,
+  "device": "mps"
+}

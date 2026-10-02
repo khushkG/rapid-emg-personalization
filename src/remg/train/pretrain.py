@@ -40,7 +40,7 @@ class PretrainConfig:
     lr: float = 1e-3
     weight_decay: float = 1e-4
     episodic_weight: float = 1.0      # 0.0 gives the plain-supervised ablation
-    class_balanced: bool = True       # rest outnumbers every movement ~6:1
+    class_balanced: bool = True       # rest is ~79% of real windows, 27-70x any movement
     warmup_steps: int = 100
     grad_clip: float = 5.0
     log_every: int = 100

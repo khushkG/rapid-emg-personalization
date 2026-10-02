@@ -1,0 +1,90 @@
+{
+  "purpose": "rest-gate threshold selected on held-out DB2 subjects only",
+  "dataset": "DB2",
+  "pretrain_subjects": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+  ],
+  "selection_subjects": [
+    12,
+    13,
+    14,
+    15
+  ],
+  "encoder_checkpoint": "results/db2_encoder.pt",
+  "encoder_reused_across_seeds": false,
+  "db3_loaded": false,
+  "objective": "maximise balanced accuracy subject to false_activation_rate <= 0.1; stated before the sweep was run",
+  "thresholds": [
+    0.0,
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9,
+    0.95,
+    0.99
+  ],
+  "shots": [
+    1,
+    3
+  ],
+  "seeds": [
+    0
+  ],
+  "pretrain_steps": 3000,
+  "adapt_budget_source": "results/budget_chosen.json",
+  "gate": {
+    "model": "LogisticRegression on adapted embeddings",
+    "C": 1.0,
+    "class_balanced": false,
+    "note": "stage 1 keeps the natural rest prior on purpose"
+  },
+  "chosen": {
+    "finetune": {
+      "threshold": 0.2,
+      "far_budget": 0.1,
+      "budget_met": true,
+      "val_balanced_accuracy": 0.6246390294051152,
+      "val_false_activation_rate": 0.09226977173234127,
+      "val_rest_recall": 0.9077302282676587,
+      "single_stage_balanced_accuracy": 0.6668798067503059,
+      "single_stage_false_activation_rate": 0.2953588529753108
+    },
+    "linear_probe": {
+      "threshold": 0.2,
+      "far_budget": 0.1,
+      "budget_met": true,
+      "val_balanced_accuracy": 0.5456293996832835,
+      "val_false_activation_rate": 0.09957660308363468,
+      "val_rest_recall": 0.9004233969163653,
+      "single_stage_balanced_accuracy": 0.5685140873999717,
+      "single_stage_false_activation_rate": 0.4410620724078853
+    },
+    "rapid": {
+      "threshold": 0.3,
+      "far_budget": 0.1,
+      "budget_met": true,
+      "val_balanced_accuracy": 0.5150557761424085,
+      "val_false_activation_rate": 0.06330474198479169,
+      "val_rest_recall": 0.9366952580152084,
+      "single_stage_balanced_accuracy": 0.5353647041051393,
+      "single_stage_false_activation_rate": 0.20860323943555636
+    }
+  },
+  "elapsed_seconds": 242.5,
+  "device": "mps"
+}

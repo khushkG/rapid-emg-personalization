@@ -1,0 +1,116 @@
+{
+  "purpose": "adaptation budget selected on held-out DB2 subjects only",
+  "dataset": "DB2",
+  "pretrain_subjects": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+  ],
+  "selection_subjects": [
+    12,
+    13,
+    14,
+    15
+  ],
+  "db3_loaded": false,
+  "shots": [
+    1,
+    3
+  ],
+  "seeds": [
+    0,
+    1
+  ],
+  "pretrain_steps": 3000,
+  "grids": {
+    "finetune": [
+      "steps=100,lr=0.0001",
+      "steps=100,lr=0.0003",
+      "steps=100,lr=0.001",
+      "steps=300,lr=0.0001",
+      "steps=300,lr=0.0003",
+      "steps=300,lr=0.001",
+      "steps=600,lr=0.0001",
+      "steps=600,lr=0.0003",
+      "steps=600,lr=0.001",
+      "steps=1200,lr=0.0001",
+      "steps=1200,lr=0.0003",
+      "steps=1200,lr=0.001"
+    ],
+    "linear_probe": [
+      "steps=200,lr=0.001",
+      "steps=200,lr=0.003",
+      "steps=600,lr=0.001",
+      "steps=600,lr=0.003",
+      "steps=1200,lr=0.001",
+      "steps=1200,lr=0.003"
+    ],
+    "rapid": [
+      "steps=50,lr=0.001",
+      "steps=50,lr=0.005",
+      "steps=50,lr=0.01",
+      "steps=200,lr=0.001",
+      "steps=200,lr=0.005",
+      "steps=200,lr=0.01",
+      "steps=600,lr=0.001",
+      "steps=600,lr=0.005",
+      "steps=600,lr=0.01",
+      "steps=1200,lr=0.001",
+      "steps=1200,lr=0.005",
+      "steps=1200,lr=0.01"
+    ]
+  },
+  "selection_rule": "highest mean balanced accuracy across held-out subjects x shots x seeds; ties within one SEM broken toward the cheaper setting",
+  "no_adaptation_reference": 0.31587961114020524,
+  "chosen": {
+    "finetune": {
+      "config": "steps=300,lr=0.0003",
+      "finetune_steps": 300,
+      "finetune_lr": 0.0003,
+      "val_balanced_accuracy": 0.6693271279708293,
+      "best_in_grid": 0.6738811973866726,
+      "tie_band_sem": 0.005012036431264429,
+      "mean_adapt_seconds": 6.839233696460724,
+      "per_shot_best_diagnostic": {
+        "1": "steps=600,lr=0.0001",
+        "3": "steps=1200,lr=0.0001"
+      }
+    },
+    "linear_probe": {
+      "config": "steps=600,lr=0.003",
+      "probe_steps": 600,
+      "probe_lr": 0.003,
+      "val_balanced_accuracy": 0.5676583394680732,
+      "best_in_grid": 0.5705305804913592,
+      "tie_band_sem": 0.00668850713372063,
+      "mean_adapt_seconds": 4.162564903497696,
+      "per_shot_best_diagnostic": {
+        "1": "steps=1200,lr=0.003",
+        "3": "steps=1200,lr=0.003"
+      }
+    },
+    "rapid": {
+      "config": "steps=1200,lr=0.001",
+      "rapid_steps": 1200,
+      "rapid_lr": 0.001,
+      "val_balanced_accuracy": 0.5340617046440326,
+      "best_in_grid": 0.5340617046440326,
+      "tie_band_sem": 0.00360988466512167,
+      "mean_adapt_seconds": 20.77119216322899,
+      "per_shot_best_diagnostic": {
+        "1": "steps=600,lr=0.005",
+        "3": "steps=1200,lr=0.001"
+      }
+    }
+  },
+  "elapsed_seconds": 9163.5,
+  "device": "mps"
+}

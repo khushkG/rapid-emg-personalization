@@ -61,6 +61,7 @@ def _with_X(ws: WindowSet, X: np.ndarray) -> WindowSet:
         rep=ws.rep,
         subject=ws.subject,
         session=ws.session,
+        start=ws.start,
         class_names=ws.class_names,
         fs=ws.fs,
     )

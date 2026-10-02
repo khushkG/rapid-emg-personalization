@@ -1,0 +1,32 @@
+{
+  "finetune": {
+    "threshold": 0.2,
+    "far_budget": 0.1,
+    "budget_met": true,
+    "val_balanced_accuracy": 0.6246390294051152,
+    "val_false_activation_rate": 0.09226977173234127,
+    "val_rest_recall": 0.9077302282676587,
+    "single_stage_balanced_accuracy": 0.6668798067503059,
+    "single_stage_false_activation_rate": 0.2953588529753108
+  },
+  "linear_probe": {
+    "threshold": 0.2,
+    "far_budget": 0.1,
+    "budget_met": true,
+    "val_balanced_accuracy": 0.5456293996832835,
+    "val_false_activation_rate": 0.09957660308363468,
+    "val_rest_recall": 0.9004233969163653,
+    "single_stage_balanced_accuracy": 0.5685140873999717,
+    "single_stage_false_activation_rate": 0.4410620724078853
+  },
+  "rapid": {
+    "threshold": 0.3,
+    "far_budget": 0.1,
+    "budget_met": true,
+    "val_balanced_accuracy": 0.5150557761424085,
+    "val_false_activation_rate": 0.06330474198479169,
+    "val_rest_recall": 0.9366952580152084,
+    "single_stage_balanced_accuracy": 0.5353647041051393,
+    "single_stage_false_activation_rate": 0.20860323943555636
+  }
+}

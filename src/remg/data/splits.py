@@ -125,6 +125,41 @@ def calibration_split(
     )
 
 
+def recency_partition(
+    ws: WindowSet,
+    calib_reps: tuple[int, ...] = (),
+    n_bins: int = 2,
+) -> list[tuple[str, np.ndarray]]:
+    """Group a subject's held-out repetitions by distance in time from calibration.
+
+    This is the cross-repetition session proxy. Calibration takes the earliest
+    repetitions, so the last repetitions of the recording are the ones furthest
+    from it; comparing accuracy on the nearest held-out repetitions against the
+    furthest measures how fast the calibration goes stale.
+
+    It answers a strictly weaker question than re-donning on another day -- the
+    electrodes are never removed, so this is drift within one session, not the
+    shift in electrode position that makes cross-session control hard. Report it
+    as the within-session bound it is. What it has going for it is that it needs
+    no extra data and no extra forward passes: the returned masks regroup
+    predictions that have already been made.
+
+    Returns (name, mask) pairs over `ws`. Empty when there are too few held-out
+    repetitions to compare, which the caller should treat as "not measurable for
+    this subject" rather than as a zero.
+    """
+    if n_bins < 2:
+        raise ValueError(f"n_bins must be at least 2, got {n_bins}")
+
+    reps = [int(r) for r in sorted(np.unique(ws.rep)) if r > 0 and r not in set(calib_reps)]
+    if len(reps) < 2:
+        return []
+
+    groups = [g for g in np.array_split(np.array(reps), min(n_bins, len(reps))) if len(g)]
+    names = ["early", "late"] if len(groups) == 2 else [f"bin{i}" for i in range(len(groups))]
+    return [(name, np.isin(ws.rep, group)) for name, group in zip(names, groups)]
+
+
 def loso_folds(
     ws: WindowSet,
     target: WindowSet | None = None,

@@ -6,5 +6,28 @@ data/raw/*
 !data/raw/.gitkeep
 results/*
 !results/.gitkeep
+# Bulk result tables stay out -- they are regenerable and large. These are not:
+# the selected configuration that committed code reads by path, the meta files
+# that record each run's exact protocol, and the small cohort-quality table the
+# README cites. Keeping them tracked is what makes a reported number auditable
+# without rerunning three hours of compute.
+!results/*_meta.json
+!results/*_chosen.json
+!results/*_chosen_steprule.json
+!results/db3_signal_quality.csv
+# The shareable figures and the predictions they are built from. The predictions are
+# labels only -- no EMG -- so they carry no redistribution problem, and keeping them
+# is what makes every figure reproducible without storing model weights.
+!results/visuals/
+!results/visuals/**
+!results/project_page.html
 *.pt
+# Vendored third-party render assets and intermediates. The GLB, three.js and the
+# licence notices are kept (they are what the figures were made with and the licences
+# require the notice to travel); the rendered frames are regenerable and bulky.
+assets/render/frames/
+assets/three/build/
+assets/three/examples/
 .DS_Store
+results/selfcheck_*
+results/pilot_*

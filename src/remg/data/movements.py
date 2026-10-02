@@ -7,10 +7,20 @@ in three exercise blocks and stored in three files per subject.
     Exercise C (file *_E2_*): 23 movements -> global ids 18..40
     Exercise D (file *_E3_*): 9 movements  -> global ids 41..49
 
-The `restimulus` field inside each file restarts at 1 for every exercise, so a
-per-file offset has to be added before labels from different files can be
-concatenated. This is the single most common source of silently wrong labels
-when working with NinaPro, so it lives here in one place.
+Which numbering `restimulus` uses depends on the release, and getting it wrong
+is the most common source of silently mislabelled NinaPro data:
+
+  * The **DB2 and DB3 files served today already carry global ids.** Verified
+    against real downloads: DB2 s1 holds 1..17, 18..40, 41..49 in its three
+    files, and DB3 s1 holds 1..17, 18..29, 41..49. Adding a per-exercise offset
+    to these corrupts every label outside exercise 1.
+  * Other releases and the widely-copied description of the format have labels
+    restarting at 1 in each file, which *does* need the offset.
+
+So the offset is applied only when the labels are actually file-local.
+`labels_are_global` decides, and `ensure_global_labels` is what callers use; the
+decision is recorded on the record's metadata rather than made silently, because
+a wrong answer here does not crash, it just renames every movement.
 """
 
 from __future__ import annotations
@@ -23,6 +33,48 @@ EXERCISE_OFFSET = {1: 0, 2: 17, 3: 40}
 
 N_MOVEMENTS = 49
 REST = 0
+
+
+def labels_are_global(labels, exercise: int) -> bool:
+    """Decide whether `labels` are already global ids rather than file-local ones.
+
+    Two signals, either of which settles it:
+
+      * a label above this exercise's movement count cannot be file-local, since
+        local ids run 1..size;
+      * every non-rest label sitting at or above this exercise's global start,
+        when a file-local block would have to include its own id 1.
+
+    Exercise 1 is the same under both conventions (its offset is zero), so it is
+    reported as global and nothing is added either way.
+    """
+    import numpy as np
+
+    if exercise not in EXERCISE_OFFSET:
+        raise ValueError(f"exercise must be one of {sorted(EXERCISE_OFFSET)}, got {exercise!r}")
+
+    offset = EXERCISE_OFFSET[exercise]
+    if offset == 0:
+        return True
+
+    nz = np.asarray(labels)
+    nz = nz[nz > 0]
+    if nz.size == 0:
+        return True                                  # nothing to shift
+    return int(nz.max()) > EXERCISE_SIZES[exercise] or int(nz.min()) > offset
+
+
+def ensure_global_labels(labels, exercise: int) -> tuple:
+    """Return (global labels, was_already_global).
+
+    The safe entry point: it offsets file-local labels and leaves already-global
+    ones alone, instead of assuming one convention and mangling the other.
+    """
+    if labels_are_global(labels, exercise):
+        import numpy as np
+
+        return np.asarray(labels), True
+    return to_global_label(labels, exercise), False
 
 
 def to_global_label(local_label, exercise: int):
@@ -44,16 +96,83 @@ def to_global_label(local_label, exercise: int):
 
 
 # ---------------------------------------------------------------------------
+# The official movement list, in global 1..40 numbering.
+#
+# Transcribed from Table I of Atzori et al., "Building the NINAPRO Database: A
+# Resource for the Biorobotics Community" (BioRob 2012), which enumerates the
+# movements *within* each exercise; the global ids below are those plus
+# EXERCISE_OFFSET. Cross-checked against the class numbers cited in Jung et al.,
+# Front. Bioeng. Biotechnol. 9:548357 (2021), which uses this same global
+# numbering and independently agrees on ids 18, 20, 22, 24, 26, 27, 30, 31, 33,
+# 34 and 36.
+#
+# Exercise D (global 41..49) is nine force patterns rather than named postures.
+# Nothing here uses them, so they are deliberately not enumerated rather than
+# guessed at; `scripts/inspect_data.py` reports their counts if they appear.
+# ---------------------------------------------------------------------------
+OFFICIAL_MOVEMENT_NAMES: dict[int, str] = {
+    # Exercise B -- hand postures (global 1..8)
+    1: "Thumb up",
+    2: "Flexion of ring and little finger, thumb flexed over middle and little",
+    3: "Flexion of ring and little finger",
+    4: "Thumb opposing base of little finger",
+    5: "Abduction of the fingers",
+    6: "Fingers flexed together",
+    7: "Pointing index",
+    8: "Fingers closed together",
+    # Exercise B -- wrist movements (global 9..17)
+    9: "Wrist supination (rotation axis through the middle finger)",
+    10: "Wrist pronation (rotation axis through the middle finger)",
+    11: "Wrist supination (rotation axis through the little finger)",
+    12: "Wrist pronation (rotation axis through the little finger)",
+    13: "Wrist flexion",
+    14: "Wrist extension",
+    15: "Wrist radial deviation",
+    16: "Wrist ulnar deviation",
+    17: "Wrist extension with closed hand",
+    # Exercise C -- grasping and functional movements (global 18..40)
+    18: "Large diameter grasp",
+    19: "Small diameter grasp",
+    20: "Fixed hook grasp",
+    21: "Index finger extension grasp",
+    22: "Medium wrap",
+    23: "Ring grasp",
+    24: "Prismatic four fingers grasp",
+    25: "Stick grasp",
+    26: "Writing tripod grasp",
+    27: "Power sphere grasp",
+    28: "Three finger sphere grasp",
+    29: "Precision sphere grasp",
+    30: "Tripod grasp",
+    31: "Prismatic pinch grasp",
+    32: "Tip pinch grasp",
+    33: "Quadpod grasp",
+    34: "Lateral grasp",
+    35: "Parallel extension grasp",
+    36: "Extension type grasp",
+    37: "Power disk grasp",
+    38: "Open a bottle with a tripod grasp",
+    39: "Turn a screw",
+    40: "Cut something",
+}
+
+
+# ---------------------------------------------------------------------------
 # The practical movement subset used by the core experiments.
 #
-# NOTE: these names follow the published NinaPro movement figures. Re-check them
-# against the official movement list once the real recordings are downloaded --
-# `scripts/inspect_data.py` prints the per-class counts so a mismatch shows up
-# immediately. Changing the subset means editing this dict and nothing else.
+# Verified against OFFICIAL_MOVEMENT_NAMES above; `test_protocol.py` pins every
+# entry to its official name, so a typo here cannot survive the suite. One
+# correction came out of that check: `lateral_grasp` was previously id 32, which
+# is Tip pinch grasp -- Lateral grasp is 34. Ids 32 and 34 are both real
+# movements, so the mistake would have trained and evaluated cleanly on the
+# wrong class rather than failing.
+#
+# The per-class counts from `scripts/inspect_data.py` remain the check that these
+# movements are actually present in the downloaded recordings.
 # ---------------------------------------------------------------------------
 DEFAULT_SUBSET: dict[int, str] = {
     0: "rest",
-    5: "open_hand",          # abduction of all fingers
+    5: "open_hand",          # abduction of the fingers
     6: "close_hand",         # fingers flexed together in a fist
     7: "point_index",
     9: "wrist_supination",
@@ -63,8 +182,73 @@ DEFAULT_SUBSET: dict[int, str] = {
     18: "large_diameter_grasp",
     22: "medium_wrap",
     30: "tripod_grasp",
-    32: "lateral_grasp",
+    34: "lateral_grasp",     # key grip -- NOT 32, which is tip pinch
 }
+
+
+# --- DB6 ---------------------------------------------------------------------
+#
+# DB6 is a different experiment from DB2/DB3: 14 electrodes in a different
+# placement, intact subjects only, and seven grasps repeated across five days. Its
+# `restimulus` values are NOT the DB2 global ids and NOT a contiguous 1..7 -- they
+# are the sparse set below, verified empirically on all 20 files of S1 and S2 (every
+# file carries exactly these seven, each with 12 repetitions).
+#
+# The names are deliberately provisional. The ids are an observation; mapping them
+# to the official grasp names needs the DB6 description as a source, and this
+# project has already been bitten once by a movement name assigned from inference
+# rather than a citation -- `lateral_grasp` was recorded as id 32 (tip pinch) until
+# two published sources were checked and it turned out to be 34. Guessing here would
+# repeat exactly that mistake, so the ids carry placeholder names until a source is
+# in hand. Nothing in the pipeline depends on the names being meaningful; they
+# appear in result tables, which is precisely why they must not be wrong.
+#
+# Checked against the literature, and the outcome is worth recording in full because
+# the obvious shortcut is wrong.
+#
+# The seven grasps DB6 contains are, with reasonable confidence: Large Diameter,
+# Adducted Thumb, Index Finger Extension, Medium Wrap, Writing Tripod, Power Sphere,
+# Precision Sphere. Several independent secondary sources describing DB6 give exactly
+# this set, in this order (originating with Palermo et al., IEEE ICORR 2017, which
+# introduced the database).
+#
+# What is NOT established is which id is which grasp, and two candidate orderings
+# disagree:
+#
+#   * If the ids ascend with presentation order, then 1, 3, 4, 6, 9, 10, 11 take the
+#     seven names in the order above.
+#   * Under the Feix GRASP taxonomy numbering, 3 is Medium Wrap and 4 is Adducted
+#     Thumb -- the opposite assignment for those two -- and 11 is Power Sphere rather
+#     than Precision Sphere.
+#
+# An earlier hypothesis here, that these are DB2 exercise-2 local ids mapping to
+# global {18, 20, 21, 23, 26, 27, 28}, is now *refuted*: it agrees for ids 1, 4, 9 and
+# 10 but DB2's exercise 2 contains no "Adducted thumb" at all, and it puts Medium Wrap
+# at local 5 and Precision Sphere at local 12 rather than at DB6's 6 and 11. Four
+# matches out of seven is the kind of partial agreement that looks like confirmation
+# and is not.
+#
+# So the names stay provisional. This project recorded `lateral_grasp` as id 32 (tip
+# pinch) until two published sources put it at 34, and that error came from exactly
+# this move -- adopting a plausible mapping without a source that states it. A figure
+# captioned with the wrong grasp is worse than one captioned "movement 3".
+DB6_MOVEMENT_IDS: tuple[int, ...] = (1, 3, 4, 6, 9, 10, 11)
+
+DB6_SUBSET: dict[int, str] = {0: "rest", **{i: f"db6_movement_{i}" for i in DB6_MOVEMENT_IDS}}
+
+DB6_NAMES_ARE_PROVISIONAL = True
+
+# The grasp set, citable, with no claim about which id is which.
+DB6_GRASP_SET: tuple[str, ...] = (
+    "Large Diameter", "Adducted Thumb", "Index Finger Extension", "Medium Wrap",
+    "Writing Tripod", "Power Sphere", "Precision Sphere",
+)
+DB6_GRASP_SET_SOURCE = (
+    "Palermo et al., 'Repeatability of grasp recognition for robotic hand prosthesis "
+    "control based on sEMG data', IEEE ICORR 2017 (the paper introducing DB6), as "
+    "reported in the descriptions of DB6 in the subsequent literature. The mapping "
+    "from restimulus id to grasp name is NOT established by any source consulted."
+)
 
 
 def subset_mapping(subset: dict[int, str] | None = None):

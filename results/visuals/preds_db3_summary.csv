@@ -1,0 +1,7 @@
+dataset,subject,day,method,balanced_accuracy
+DB3,3,test,none,0.20453532404918406
+DB3,3,test,linear_probe,0.40523494475546
+DB3,3,test,finetune,0.5965096180555282
+DB3,3,test,finetune_classic_gate,0.5967436802419507
+DB3,3,test,rapid,0.40647325434668485
+DB3,3,test,td_rf,0.6029270080708814

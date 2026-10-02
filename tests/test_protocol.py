@@ -11,8 +11,20 @@ import pytest
 import torch
 
 from remg.data import PreprocessConfig, WindowConfig, preprocess, segment
-from remg.data.movements import EXERCISE_OFFSET, to_global_label
-from remg.data.splits import calibration_split, hold_out_subject, loso_folds
+from remg.data.movements import (
+    DEFAULT_SUBSET,
+    EXERCISE_OFFSET,
+    EXERCISE_SIZES,
+    OFFICIAL_MOVEMENT_NAMES,
+    subset_mapping,
+    to_global_label,
+)
+from remg.data.splits import (
+    calibration_split,
+    hold_out_subject,
+    loso_folds,
+    recency_partition,
+)
 from remg.data.synthetic import make_cohort
 from remg.models import build_model
 from remg.models.adapters import FiLM, reset_adapters
@@ -42,6 +54,70 @@ def test_rest_stays_rest_after_offsetting():
     out = to_global_label(local, 2)
     assert out[0] == 0 and out[3] == 0          # rest is never shifted
     assert out.tolist() == [0, 18, 22, 0, 40]
+
+
+# --- the movement subset ----------------------------------------------------
+#
+# A wrong id here does not crash and does not look wrong in any output: the run
+# simply trains and reports on a different movement than the one named. These
+# tests are the only thing standing between a typo and a mislabelled result.
+
+# Every subset entry, pinned to its name in the official NinaPro movement list.
+SUBSET_PROVENANCE = [
+    (5,  "open_hand",             "Abduction of the fingers"),
+    (6,  "close_hand",            "Fingers flexed together"),
+    (7,  "point_index",           "Pointing index"),
+    (9,  "wrist_supination",      "Wrist supination (rotation axis through the middle finger)"),
+    (10, "wrist_pronation",       "Wrist pronation (rotation axis through the middle finger)"),
+    (13, "wrist_flexion",         "Wrist flexion"),
+    (14, "wrist_extension",       "Wrist extension"),
+    (18, "large_diameter_grasp",  "Large diameter grasp"),
+    (22, "medium_wrap",           "Medium wrap"),
+    (30, "tripod_grasp",          "Tripod grasp"),
+    (34, "lateral_grasp",         "Lateral grasp"),
+]
+
+
+@pytest.mark.parametrize("global_id,our_name,official_name", SUBSET_PROVENANCE)
+def test_subset_entry_matches_the_official_movement(global_id, our_name, official_name):
+    assert DEFAULT_SUBSET[global_id] == our_name
+    assert OFFICIAL_MOVEMENT_NAMES[global_id] == official_name
+
+
+def test_subset_provenance_is_exhaustive():
+    """Adding a movement without recording its provenance fails here."""
+    pinned = {g for g, _, _ in SUBSET_PROVENANCE} | {0}       # 0 is rest
+    assert set(DEFAULT_SUBSET) == pinned
+
+
+def test_lateral_grasp_is_not_confused_with_tip_pinch():
+    """The specific error this check was added to catch."""
+    assert OFFICIAL_MOVEMENT_NAMES[32] == "Tip pinch grasp"
+    assert OFFICIAL_MOVEMENT_NAMES[34] == "Lateral grasp"
+    assert 32 not in DEFAULT_SUBSET
+
+
+def test_official_names_cover_the_named_movements_exactly():
+    """Exercises B and C are named postures; exercise D is force patterns."""
+    named = EXERCISE_SIZES[1] + EXERCISE_SIZES[2]             # 17 + 23
+    assert sorted(OFFICIAL_MOVEMENT_NAMES) == list(range(1, named + 1))
+    assert len(set(OFFICIAL_MOVEMENT_NAMES.values())) == named   # no duplicates
+
+
+def test_subset_ids_are_real_movements():
+    for global_id in DEFAULT_SUBSET:
+        if global_id == 0:
+            continue
+        assert global_id in OFFICIAL_MOVEMENT_NAMES, f"id {global_id} is not a named movement"
+
+
+def test_subset_mapping_is_contiguous_and_ordered():
+    """Models need 0..K-1 targets, and the names must stay aligned to them."""
+    mapping, names = subset_mapping()
+    assert sorted(mapping.values()) == list(range(len(DEFAULT_SUBSET)))
+    assert names[mapping[0]] == "rest"
+    for global_id, our_name, _ in SUBSET_PROVENANCE:
+        assert names[mapping[global_id]] == our_name
 
 
 # --- windowing -------------------------------------------------------------
@@ -80,6 +156,159 @@ def test_calibration_sets_are_nested_across_shot_counts(ws):
 def test_calibration_covers_every_class(ws):
     split = calibration_split(ws, subject=1, shots=1)
     assert set(np.unique(split.calib.y)) == set(range(ws.n_classes))
+
+
+# --- fairness of the baselines ----------------------------------------------
+#
+# `rapid` classifies by per-class prototypes, so it is prior-free whatever the
+# class balance of the calibration set. The gradient-trained baselines are not.
+# Leaving them to train on calibration windows that are ~79% rest collapses them
+# onto predicting rest, and the resulting gap reads as the adapters working.
+
+def test_calibration_sampling_is_class_balanced_by_default(ws):
+    """The baselines must not be handicapped by a prior `rapid` never sees."""
+    from remg.train.adapt import AdaptConfig, _class_balanced_weights
+
+    assert AdaptConfig().class_balanced is True
+
+    split = calibration_split(ws, subject=1, shots=2)
+    w = _class_balanced_weights(split.calib)
+
+    assert w.sum() == pytest.approx(1.0)
+    mass = np.array([w[split.calib.y == c].sum() for c in range(ws.n_classes)])
+    present = mass > 0
+    assert np.allclose(mass[present], mass[present][0]), "classes do not get equal mass"
+
+
+def test_balanced_sampling_actually_rebalances_a_skewed_calibration_set(ws):
+    """With rest dominant, a balanced draw must not come back mostly rest."""
+    from remg.train.adapt import _batches, _class_balanced_weights
+
+    split = calibration_split(ws, subject=1, shots=2)
+    calib = split.calib
+    rng = np.random.default_rng(0)
+
+    plain = next(_batches(len(calib), 512, 1, rng))
+    balanced = next(_batches(len(calib), 512, 1, rng, _class_balanced_weights(calib)))
+
+    rest_plain = float((calib.y[plain] == 0).mean())
+    rest_balanced = float((calib.y[balanced] == 0).mean())
+    assert rest_balanced < rest_plain, "balancing did not reduce the rest fraction"
+    assert len(np.unique(calib.y[balanced])) >= len(np.unique(calib.y[plain]))
+
+
+# --- cohort exclusions ------------------------------------------------------
+#
+# An exclusion changes who the result is about. These pin the registry so one
+# cannot be added, removed or silently reworded without the change being seen.
+
+def test_documented_exclusions_are_exactly_what_we_expect():
+    from remg.data.cohort import EXCLUSIONS, excluded_subjects
+
+    assert excluded_subjects("DB3") == [1]
+    assert excluded_subjects("DB2") == []
+    assert set(EXCLUSIONS) == {("DB3", 1)}
+
+
+def test_every_exclusion_states_a_reason():
+    """An exclusion without a stated reason is indistinguishable from cherry-picking."""
+    from remg.data.cohort import EXCLUSIONS
+
+    for (dataset, subject), reason in EXCLUSIONS.items():
+        assert len(reason) > 60, f"{dataset} S{subject} needs a real reason, not a note"
+        assert any(w in reason.lower() for w in ("movement", "channel", "electrode")), (
+            f"{dataset} S{subject}: the reason should say what is missing from the data"
+        )
+
+
+def test_exclusion_reason_is_reported_for_the_writeup():
+    from remg.data.cohort import describe, exclusion_reason
+
+    assert exclusion_reason("DB3", 1)
+    assert exclusion_reason("DB3", 2) is None
+    assert "S1" in describe("DB3")
+    assert "no subjects excluded" in describe("DB2")
+
+
+# --- rejection curve --------------------------------------------------------
+
+def test_rejection_curve_flags_points_that_lost_classes():
+    """Balanced accuracy across thresholds is only comparable at a fixed class set.
+
+    Raising the confidence threshold drops whole classes out of the surviving
+    windows, and balanced accuracy then averages over the survivors -- so the
+    curve can climb without the model improving at all.
+    """
+    from remg.evaluate.metrics import rejection_curve
+
+    n, k = 400, 4
+    y = np.arange(n) % k
+    proba = np.zeros((n, k))
+    for i, c in enumerate(y):
+        if c == 0:                      # class 0 is the only confident one
+            proba[i] = 0.01 / (k - 1)
+            proba[i, 0] = 0.99
+        else:                           # every other class peaks at 0.4
+            proba[i] = 0.6 / (k - 1)
+            proba[i, c] = 0.4
+
+    rows = rejection_curve(y, proba)
+
+    assert all("classes_present" in r and "comparable" in r for r in rows)
+    assert rows[0]["comparable"], "full coverage must be comparable to itself"
+    degenerate = [r for r in rows if r["classes_present"] < 2]
+    assert degenerate, "this fixture should drive some thresholds down to one class"
+    assert all(np.isnan(r["balanced_accuracy"]) for r in degenerate), (
+        "a single-class subset scores 1.0 or 0.0 by construction, not by skill"
+    )
+
+
+def test_rejection_curve_coverage_is_monotone():
+    from remg.evaluate.metrics import rejection_curve
+
+    rng = np.random.default_rng(1)
+    y = rng.integers(0, 5, size=300)
+    proba = rng.dirichlet(np.ones(5), size=300)
+
+    cov = [r["coverage"] for r in rejection_curve(y, proba)]
+    assert all(b <= a + 1e-12 for a, b in zip(cov, cov[1:])), "coverage must not rise"
+
+
+# --- the cross-repetition session proxy -------------------------------------
+
+def test_recency_bins_are_disjoint_and_cover_the_test_set(ws):
+    split = calibration_split(ws, subject=1, shots=2)
+    bins = recency_partition(split.test, split.calib_reps)
+
+    assert [name for name, _ in bins] == ["early", "late"]
+    masks = [m for _, m in bins]
+    assert not (masks[0] & masks[1]).any()
+    assert (masks[0] | masks[1]).all(), "every held-out window belongs to a bin"
+
+
+def test_late_repetitions_are_actually_later(ws):
+    """The proxy is meaningless if the bins are not ordered in time."""
+    split = calibration_split(ws, subject=1, shots=2)
+    (_, early), (_, late) = recency_partition(split.test, split.calib_reps)
+
+    assert split.test.rep[early].max() < split.test.rep[late].min()
+
+
+def test_recency_bins_never_include_calibration_repetitions(ws):
+    """Scoring on a calibration repetition would report memorisation as retention."""
+    split = calibration_split(ws, subject=1, shots=2)
+
+    for _, mask in recency_partition(ws.select(ws.subject == 1), split.calib_reps):
+        assert set(np.unique(ws.select(ws.subject == 1).rep[mask])).isdisjoint(split.calib_reps)
+
+
+def test_recency_partition_declines_when_it_cannot_measure(ws):
+    """One held-out repetition cannot show drift; it must not fake a bin."""
+    subject = ws.select(ws.subject == 1)
+    reps = sorted(int(r) for r in np.unique(subject.rep) if r > 0)
+    all_but_one = tuple(reps[:-1])
+
+    assert recency_partition(subject, all_but_one) == []
 
 
 def test_held_out_subject_contributes_nothing_to_pretraining(ws):

@@ -1,0 +1,80 @@
+{
+  "protocol": {
+    "train_reps": [
+      1,
+      3,
+      4,
+      6
+    ],
+    "test_reps": [
+      2,
+      5
+    ]
+  },
+  "movement_set": "subset",
+  "subjects": [
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+  ],
+  "excluded_from_subset_runs": [
+    1
+  ],
+  "window": {
+    "length_ms": 200.0,
+    "stride_ms": 100.0,
+    "overlap_pct": 50.0,
+    "purity": 0.9,
+    "keep_rest": true
+  },
+  "preprocess": {
+    "notch_hz": null,
+    "band_hz": [
+      20.0,
+      450.0
+    ],
+    "target_fs": 1000,
+    "source_fs": 2000
+  },
+  "features": {
+    "set": [
+      "MAV",
+      "RMS",
+      "WL",
+      "ZC",
+      "SSC"
+    ],
+    "per_channel": true,
+    "zc_ssc_threshold": "0.01 x per-channel RMS of the TRAINING windows",
+    "scaler": "StandardScaler fitted on training windows only"
+  },
+  "classifiers": {
+    "lda": "LinearDiscriminantAnalysis(solver='svd')",
+    "svm": "SVC(kernel='rbf', C=10.0, gamma='scale')",
+    "rf": "RandomForestClassifier(n_estimators=300, random_state=0)",
+    "cnn_scratch": "1200 steps, batch 128, AdamW lr 0.001",
+    "cnn_pretrained_ft": "DB2 encoder transferred, fresh head, 600 steps, batch 128, AdamW lr 0.0003",
+    "class_balanced_sampling": true
+  },
+  "pretrain_steps": 3000,
+  "rest_behaviour": {
+    "false_activation_rate": "fraction of true-rest windows predicted as a movement; exactly 1 - rest_recall",
+    "false_activations_per_min": "maximal runs of movement prediction inside a true-rest stretch, per minute of rest; events, not windows, and not derivable from the rate",
+    "event_grouping": "per repetition, so no event spans a seam between two"
+  },
+  "smoothing": {
+    "kind": "majority vote",
+    "span_windows": 5,
+    "span_ms": 500.0,
+    "crosses_repetition_boundary": false
+  },
+  "no_tuning_on_test": "All classifier settings fixed a priori; no search. Normalization, feature scaler and ZC/SSC thresholds fitted on training repetitions only.",
+  "device": "mps"
+}

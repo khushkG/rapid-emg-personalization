@@ -43,6 +43,10 @@ class AdaptConfig:
     rapid_lr: float = 5e-3           # larger: only a few hundred parameters
     drift_weight: float = 0.05       # penalty on moving away from the general model
     batch_size: int = 128
+    # Balance the calibration classes for the gradient-trained conditions. Off
+    # makes the comparison against `rapid` unfair rather than conservative --
+    # see _batches.
+    class_balanced: bool = True
     seed: int = 0
 
 
@@ -79,9 +83,36 @@ def predict(model, ws: WindowSet, device, mode: str = "linear", batch_size: int 
     return predict_proba(model, ws, device, mode=mode, batch_size=batch_size).argmax(axis=1)
 
 
-def _batches(n: int, batch_size: int, steps: int, rng: np.random.Generator):
+def _batches(n: int, batch_size: int, steps: int, rng: np.random.Generator,
+             weights: np.ndarray | None = None):
+    """Calibration batches, optionally sampled to balance the classes.
+
+    Rest is around 79% of real windows and up to 70x any single movement, so a
+    uniformly-sampled batch is mostly rest and cross-entropy on it converges to
+    predicting rest. Pretraining already samples class-balanced; not doing the
+    same here handicapped `linear_probe` and `finetune` against `rapid`, which
+    classifies by per-class prototypes and is prior-free by construction. The
+    resulting gap looked like the adapters working and was partly just the
+    baselines inheriting a prior the proposed method never sees.
+    """
+    replace_ = n < batch_size
     for _ in range(steps):
-        yield rng.choice(n, size=min(batch_size, n), replace=n < batch_size)
+        if weights is None:
+            yield rng.choice(n, size=min(batch_size, n), replace=replace_)
+        else:
+            # Balanced sampling oversamples the rare classes, so it must draw
+            # with replacement.
+            yield rng.choice(n, size=min(batch_size, n), replace=True, p=weights)
+
+
+def _class_balanced_weights(calib: WindowSet) -> np.ndarray:
+    """Per-window sampling probabilities that give every present class equal mass."""
+    counts = np.bincount(calib.y, minlength=calib.n_classes).astype(np.float64)
+    per_class = np.zeros_like(counts)
+    nonzero = counts > 0
+    per_class[nonzero] = 1.0 / counts[nonzero]
+    w = per_class[calib.y]
+    return w / w.sum()
 
 
 def _to_device(ws: WindowSet, idx, device):
@@ -123,7 +154,8 @@ def adapt(
         # Backbone stays in eval mode so its BatchNorm running statistics are not
         # rewritten by a handful of calibration windows.
         model.eval()
-        for idx in _batches(len(calib), cfg.batch_size, cfg.probe_steps, rng):
+        weights = _class_balanced_weights(calib) if cfg.class_balanced else None
+        for idx in _batches(len(calib), cfg.batch_size, cfg.probe_steps, rng, weights):
             x, y = _to_device(calib, idx, device)
             loss = F.cross_entropy(model(x, mode="linear"), y)
             opt.zero_grad(set_to_none=True)
@@ -140,7 +172,8 @@ def adapt(
             p.requires_grad_(True)
         opt = torch.optim.AdamW(model.parameters(), lr=cfg.finetune_lr)
         model.train()
-        for idx in _batches(len(calib), cfg.batch_size, cfg.finetune_steps, rng):
+        weights = _class_balanced_weights(calib) if cfg.class_balanced else None
+        for idx in _batches(len(calib), cfg.batch_size, cfg.finetune_steps, rng, weights):
             x, y = _to_device(calib, idx, device)
             loss = F.cross_entropy(model(x, mode="linear"), y)
             opt.zero_grad(set_to_none=True)

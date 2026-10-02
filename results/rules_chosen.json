@@ -1,0 +1,65 @@
+{
+  "finetune": {
+    "debounce_n": 1,
+    "debounce": {
+      "n": 1,
+      "bal_tolerance": 0.03,
+      "undebounced_balanced_accuracy": 0.6651278191957813,
+      "val_balanced_accuracy": 0.6651278191957813,
+      "val_false_activations_per_min": 47.350598566228875,
+      "val_false_activation_rate": 0.28015933532042475,
+      "added_latency_ms": 0.0
+    },
+    "classic_gate": {
+      "threshold": 0.3,
+      "far_budget": 0.1,
+      "budget_met": true,
+      "val_balanced_accuracy": 0.6381887837309587,
+      "val_false_activation_rate": 0.07376407208536101,
+      "val_rest_recall": 0.926235927914639,
+      "val_false_activations_per_min": 14.310417490596326
+    }
+  },
+  "linear_probe": {
+    "debounce_n": 1,
+    "debounce": {
+      "n": 1,
+      "bal_tolerance": 0.03,
+      "undebounced_balanced_accuracy": 0.5685140873999716,
+      "val_balanced_accuracy": 0.5685140873999716,
+      "val_false_activations_per_min": 62.958201232377995,
+      "val_false_activation_rate": 0.44106207240788536,
+      "added_latency_ms": 0.0
+    },
+    "classic_gate": {
+      "threshold": 0.3,
+      "far_budget": 0.1,
+      "budget_met": true,
+      "val_balanced_accuracy": 0.5558617966682312,
+      "val_false_activation_rate": 0.07376407208536101,
+      "val_rest_recall": 0.926235927914639,
+      "val_false_activations_per_min": 14.310417490596326
+    }
+  },
+  "rapid": {
+    "debounce_n": 1,
+    "debounce": {
+      "n": 1,
+      "bal_tolerance": 0.03,
+      "undebounced_balanced_accuracy": 0.5352594996362158,
+      "val_balanced_accuracy": 0.5352594996362158,
+      "val_false_activations_per_min": 41.96588410457486,
+      "val_false_activation_rate": 0.20839057736170835,
+      "added_latency_ms": 0.0
+    },
+    "classic_gate": {
+      "threshold": 0.3,
+      "far_budget": 0.1,
+      "budget_met": true,
+      "val_balanced_accuracy": 0.5274345969473787,
+      "val_false_activation_rate": 0.07376407208536101,
+      "val_rest_recall": 0.926235927914639,
+      "val_false_activations_per_min": 14.310417490596326
+    }
+  }
+}
