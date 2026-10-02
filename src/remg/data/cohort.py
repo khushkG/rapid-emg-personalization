@@ -24,6 +24,35 @@ EXCLUSIONS: dict[tuple[str, int], str] = {
 }
 
 
+# (dataset, filename) -> reason. Separate from EXCLUSIONS on purpose: a defective
+# *recording* is not a defective *subject*. Excluding the whole subject because one
+# of ten files is short would throw away nine good recordings and fail this file's
+# own stated bar -- the subject can still answer the question being asked. These are
+# recorded so that any analysis which depends on the affected day says so, and so
+# that nobody re-discovers the same truncation in six months and wonders if it is a
+# loader bug.
+PARTIAL_RECORDINGS: dict[tuple[str, str], str] = {
+    ("DB6", "S2_D2_T2.mat"): (
+        "truncated: 103 s of recording against ~715 s for every other DB6 trial, "
+        "containing only movement 1 (with all 12 of its repetitions) instead of the "
+        "seven movements every other file carries. The session appears to have been "
+        "stopped after the first movement block. Day 1 and day 5 of this subject are "
+        "complete, so the day-1 -> day-5 cross-session study is unaffected; only an "
+        "analysis using day 2 is. Verified by direct inspection of all 20 files of "
+        "DB6 S1 and S2."
+    ),
+}
+
+
+def partial_recordings(dataset: str) -> dict[str, str]:
+    """Known-defective individual files for `dataset`, filename -> reason."""
+    return {f: why for (ds, f), why in PARTIAL_RECORDINGS.items() if ds == dataset}
+
+
+def partial_reason(dataset: str, filename: str) -> str | None:
+    return PARTIAL_RECORDINGS.get((dataset, filename))
+
+
 def excluded_subjects(dataset: str) -> list[int]:
     """Subject ids excluded from `dataset`, sorted."""
     return sorted(s for (ds, s) in EXCLUSIONS if ds == dataset)

@@ -358,3 +358,70 @@ def test_rest_windows_get_attached_to_a_repetition(tmp_path):
 
     assert (rec.repetition > 0).all()
     assert np.array_equal(np.unique(rec.repetition), np.arange(1, 7))
+
+
+# --- DB6: padding columns and per-trial repetitions ------------------------
+
+def test_db6_drops_the_two_empty_columns(tmp_path):
+    """14 electrodes must reach the model, not 16 columns with two of them zero."""
+    write_db6_subject(tmp_path, subject=1, days=(1,))
+    rec = load_file(tmp_path / "S1_D1_T1.mat", "DB6")
+    assert rec.n_channels == 14
+    assert rec.meta["dropped_channels"] == [8, 9]
+    assert rec.meta["channels_before_drop"] == 16
+    assert rec.meta["other_flat_channels"] == []
+
+
+def test_db6_refuses_to_drop_columns_that_carry_signal(tmp_path):
+    """The registry is an assumption, so it has to be checked, not trusted.
+
+    If a future release pads different columns, dropping 8 and 9 regardless would
+    delete two real electrodes and quietly degrade every result.
+    """
+    write_db6_subject(tmp_path, subject=1, days=(1,), empty_channels=())
+    with pytest.raises(ValueError, match="carry signal"):
+        load_file(tmp_path / "S1_D1_T1.mat", "DB6")
+
+
+def test_db6_reports_an_unexpected_flat_column_without_dropping_it(tmp_path):
+    """A dead electrode is not padding; DB3 has several and they must stay."""
+    write_db6_subject(tmp_path, subject=1, days=(1,), empty_channels=(8, 9, 3))
+    rec = load_file(tmp_path / "S1_D1_T1.mat", "DB6")
+    assert rec.meta["dropped_channels"] == [8, 9]
+    assert rec.meta["other_flat_channels"] == [3]
+    assert rec.n_channels == 14, "a dead electrode must not change the channel count"
+
+
+def test_db6_trials_get_consecutive_repetitions(tmp_path):
+    """Both trials of a day number their repetitions from 1 in the real files.
+
+    Concatenated as-is, every (movement, repetition) pair occurs twice and a
+    "1-shot" calibration set silently holds two repetitions -- so every reported
+    shot count would be wrong by a factor of two.
+    """
+    write_db6_subject(tmp_path, subject=1, days=(1,), trials=(1, 2), n_repetitions=6)
+    rec = load_subject(tmp_path, "DB6", subject=1, session=0, expected_channels=14)
+    reps = sorted({int(r) for r in np.unique(rec.repetition) if r > 0})
+    assert reps == list(range(1, 13)), f"expected 12 distinct repetitions, got {reps}"
+    assert rec.meta["repetitions_renumbered_per_trial"] is True
+    assert rec.meta["trials"] == [1, 2]
+
+
+def test_db2_repetitions_are_never_renumbered(tmp_path):
+    """DB2/DB3 files are exercises, not trials: renumbering would change every result."""
+    write_subject(tmp_path, subject=1, n_repetitions=6)
+    rec = load_subject(tmp_path, "DB2", subject=1, session=0, expected_channels=12)
+    reps = sorted({int(r) for r in np.unique(rec.repetition) if r > 0})
+    assert reps == list(range(1, 7)), (
+        f"DB2 repetitions must stay 1..6 across its three exercise files, got {reps}"
+    )
+    assert rec.meta["repetitions_renumbered_per_trial"] is False
+
+
+def test_db6_single_trial_day_is_not_renumbered(tmp_path):
+    """With one file there is nothing to disambiguate, so leave the numbering alone."""
+    write_db6_subject(tmp_path, subject=1, days=(1,), trials=(1,), n_repetitions=6)
+    rec = load_subject(tmp_path, "DB6", subject=1, session=0, expected_channels=14)
+    reps = sorted({int(r) for r in np.unique(rec.repetition) if r > 0})
+    assert reps == list(range(1, 7))
+    assert rec.meta["repetitions_renumbered_per_trial"] is False

@@ -208,19 +208,39 @@ def write_db6_subject(
     root: Path,
     subject: int,
     days: tuple[int, ...] = (1, 5),
-    n_channels: int = 14,
+    trials: tuple[int, ...] = (1,),
+    n_channels: int = 16,
+    empty_channels: tuple[int, ...] = (8, 9),
     n_repetitions: int = 6,
     fmt: str = "v5",
 ) -> list[Path]:
     """Write DB6-style files, which encode day and trial instead of exercise.
 
-    DB6 has its own electrode count and a much smaller movement set; the point
-    here is the filename convention and the day -> session mapping.
+    Faithful to the real files in two ways the first version of this fixture was
+    not, both verified against DB6 S1 and S2:
+
+    * `emg` has **16** columns, of which 8 and 9 are identically zero. The
+      acquisition used 14 electrodes and the container pads to 16. A fixture with 14
+      real columns cannot exercise the loader's channel-dropping at all, and the
+      loader is right to reject it -- the padding is part of the format.
+    * A day has **two trials**, each numbering its repetitions from 1. Passing
+      `trials=(1, 2)` is what exercises the renumbering that stops "repetition 1"
+      from meaning two different repetitions.
+
+    `empty_channels=()` writes an unfaithful file on purpose, for the test that the
+    loader refuses to drop columns that carry signal.
     """
     paths = []
     for day in days:
-        arrays = build_exercise(
-            1, n_channels=n_channels, n_repetitions=n_repetitions, seed=subject * 100 + day
-        )
-        paths.append(write_mat(root / f"S{subject}_D{day}_T1.mat", arrays, fmt))
+        for trial in trials:
+            arrays = build_exercise(
+                1, n_channels=n_channels, n_repetitions=n_repetitions,
+                seed=subject * 100 + day * 10 + trial,
+            )
+            if empty_channels:
+                emg = arrays["emg"]
+                for c in empty_channels:
+                    emg[:, c] = 0.0
+                arrays["emg"] = emg
+            paths.append(write_mat(root / f"S{subject}_D{day}_T{trial}.mat", arrays, fmt))
     return paths

@@ -48,6 +48,19 @@ NATIVE_FS = {"DB1": 100, "DB2": 2000, "DB3": 2000, "DB6": 2000}
 _DB23_NAME = re.compile(r"[Ss](\d+)_[Ee](\d+)_[Aa](\d+)\.mat$")
 _DB6_NAME = re.compile(r"[Ss](\d+)_[Dd](\d+)_[Tt](\d+)\.mat$")
 
+# Columns of `emg` that carry no signal and must be removed before the model sees
+# them. DB6 stores 16 columns but the acquisition used 14 electrodes; two columns
+# are padding and are identically zero.
+#
+# This is a registry rather than per-file detection on purpose. Detecting "constant
+# columns" and dropping them would also drop a real electrode that happened to be
+# flat, and DB3 proved that population exists -- S6 and S7 each have two genuinely
+# dead electrodes. So the expected columns are named here, *verified* against every
+# file, and anything else that looks flat is reported instead of silently removed.
+# Verified on all 20 files of DB6 S1 and S2: columns 8 and 9, peak-to-peak exactly
+# zero, one unique value, in every file.
+EMPTY_CHANNELS: dict[str, tuple[int, ...]] = {"DB6": (8, 9)}
+
 
 def _load_mat(path: Path) -> dict:
     """Read a .mat file written in either the v5 or the v7.3 (HDF5) format."""
@@ -89,12 +102,43 @@ def load_file(path: Path, dataset: str) -> SubjectRecord:
     path = Path(path)
     mat = _load_mat(path)
     subject, exercise, day = parse_filename(path)
+    # Trial, where the convention has one. DB6 records two trials per day, which
+    # matters when their repetitions are concatenated -- see load_subject.
+    _m6 = _DB6_NAME.search(path.name)
+    trial = int(_m6.group(3)) if _m6 else None
 
     emg = _field(mat, "emg", path).astype(np.float32)
     if emg.ndim != 2:
         raise ValueError(f"{path.name}: emg has shape {emg.shape}, expected (samples, channels)")
     if emg.shape[0] < emg.shape[1]:  # stored transposed
         emg = emg.T
+
+    channels_before = int(emg.shape[1])
+    dropped: list[int] = []
+    other_flat: list[int] = []
+    expected_empty = EMPTY_CHANNELS.get(dataset, ())
+    if expected_empty:
+        if max(expected_empty) >= channels_before:
+            raise ValueError(
+                f"{path.name}: {dataset} is registered as having empty columns "
+                f"{expected_empty} but the file only has {channels_before} columns"
+            )
+        spread = np.ptp(emg, axis=0)
+        not_empty = [c for c in expected_empty if spread[c] != 0]
+        if not_empty:
+            raise ValueError(
+                f"{path.name}: column(s) {not_empty} are registered as empty for "
+                f"{dataset} but carry signal (peak-to-peak "
+                f"{[float(spread[c]) for c in not_empty]}). The electrode layout is "
+                f"not what EMPTY_CHANNELS claims -- do not drop them blindly."
+            )
+        # A flat column that is *not* in the registry is a dead electrode, not
+        # padding. Report it; dropping it would change the channel count per file.
+        other_flat = [int(c) for c in np.flatnonzero(spread == 0)
+                      if c not in expected_empty]
+        keep = [c for c in range(channels_before) if c not in expected_empty]
+        emg = np.ascontiguousarray(emg[:, keep])
+        dropped = list(expected_empty)
 
     label = _field(mat, "restimulus", path).astype(np.int16).ravel()
     rep = _field(mat, "rerepetition", path).astype(np.int16).ravel()
@@ -119,7 +163,12 @@ def load_file(path: Path, dataset: str) -> SubjectRecord:
             "source_file": path.name,
             "exercise": exercise,
             "day": day,
+            "trial": trial,
             "labels_were_global": labels_were_global,
+            "channels_before_drop": channels_before,
+            "dropped_channels": dropped,
+            "n_channels": int(emg.shape[1]),
+            "other_flat_channels": other_flat,
         },
     )
 
@@ -167,10 +216,39 @@ def load_subject(
             "subject or set expected_channels=None and handle the mismatch explicitly."
         )
 
+    # Repetition numbering when several files make up one session.
+    #
+    # DB2/DB3 split a session by *exercise*, and each movement appears in exactly
+    # one exercise file, so "repetition 3" is unambiguous after concatenation and
+    # must be left alone -- renumbering it would silently change every published
+    # DB2/DB3 result.
+    #
+    # DB6 splits a day into two *trials* of the same seven movements, each numbering
+    # its repetitions 1..12. Concatenated as-is, every (movement, repetition) pair
+    # occurs twice, and because calibration is selected by repetition *value*, a
+    # "1-shot" calibration set would quietly contain two repetitions and the test
+    # set would draw from both trials. The shot count in every reported number would
+    # be wrong by a factor of two. So trials are renumbered consecutively: trial 2's
+    # repetitions continue after trial 1's, and one shot is one repetition.
+    trials = [p.meta.get("trial") for p in parts]
+    renumber = len(parts) > 1 and all(t is not None for t in trials)
+    reps: list[np.ndarray] = []
+    if renumber:
+        offset = 0
+        for p in parts:
+            r = p.repetition.astype(np.int32)
+            # Rest carries repetition 0 until `with_rest_repetitions` assigns one;
+            # leave those alone or the offset would invent repetitions for rest.
+            shifted = np.where(r > 0, r + offset, 0)
+            reps.append(shifted.astype(np.int16))
+            offset = int(shifted.max()) if shifted.size else offset
+    else:
+        reps = [p.repetition for p in parts]
+
     return SubjectRecord(
         emg=np.concatenate([p.emg for p in parts], axis=0),
         label=np.concatenate([p.label for p in parts]),
-        repetition=np.concatenate([p.repetition for p in parts]),
+        repetition=np.concatenate(reps),
         subject=subject,
         dataset=dataset,
         fs=parts[0].fs,
@@ -178,6 +256,15 @@ def load_subject(
         meta={
             "source_files": [p.meta["source_file"] for p in parts],
             "n_channels": n_ch,
+            "trials": trials,
+            "repetitions_renumbered_per_trial": renumber,
+            "dropped_channels": {
+                p.meta["source_file"]: p.meta.get("dropped_channels", []) for p in parts
+            },
+            "other_flat_channels": {
+                p.meta["source_file"]: p.meta.get("other_flat_channels", [])
+                for p in parts if p.meta.get("other_flat_channels")
+            },
             "labels_were_global": {
                 p.meta["source_file"]: p.meta["labels_were_global"] for p in parts
             },

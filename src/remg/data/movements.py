@@ -186,6 +186,35 @@ DEFAULT_SUBSET: dict[int, str] = {
 }
 
 
+# --- DB6 ---------------------------------------------------------------------
+#
+# DB6 is a different experiment from DB2/DB3: 14 electrodes in a different
+# placement, intact subjects only, and seven grasps repeated across five days. Its
+# `restimulus` values are NOT the DB2 global ids and NOT a contiguous 1..7 -- they
+# are the sparse set below, verified empirically on all 20 files of S1 and S2 (every
+# file carries exactly these seven, each with 12 repetitions).
+#
+# The names are deliberately provisional. The ids are an observation; mapping them
+# to the official grasp names needs the DB6 description as a source, and this
+# project has already been bitten once by a movement name assigned from inference
+# rather than a citation -- `lateral_grasp` was recorded as id 32 (tip pinch) until
+# two published sources were checked and it turned out to be 34. Guessing here would
+# repeat exactly that mistake, so the ids carry placeholder names until a source is
+# in hand. Nothing in the pipeline depends on the names being meaningful; they
+# appear in result tables, which is precisely why they must not be wrong.
+#
+# The hypothesis worth checking against the documentation, recorded so it is not
+# re-derived: {1, 3, 4, 6, 9, 10, 11} would be exercise-2 *local* ids, which map to
+# DB2 global {18, 20, 21, 23, 26, 27, 28} under EXERCISE_OFFSET[2] = 17. That is
+# consistent with DB6 reusing a subset of DB2's grasping exercise, and it is
+# unverified.
+DB6_MOVEMENT_IDS: tuple[int, ...] = (1, 3, 4, 6, 9, 10, 11)
+
+DB6_SUBSET: dict[int, str] = {0: "rest", **{i: f"db6_movement_{i}" for i in DB6_MOVEMENT_IDS}}
+
+DB6_NAMES_ARE_PROVISIONAL = True
+
+
 def subset_mapping(subset: dict[int, str] | None = None):
     """Return (global_id -> contiguous class index, class_names).
 
