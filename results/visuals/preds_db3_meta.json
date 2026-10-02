@@ -1,0 +1,35 @@
+{
+  "mode": "db3",
+  "targets": [
+    3
+  ],
+  "shots": 3,
+  "seed": 0,
+  "pretrain_steps": 3000,
+  "classes": [
+    "rest",
+    "open_hand",
+    "close_hand",
+    "point_index",
+    "wrist_supination",
+    "wrist_pronation",
+    "wrist_flexion",
+    "wrist_extension",
+    "large_diameter_grasp",
+    "medium_wrap",
+    "tripod_grasp",
+    "lateral_grasp"
+  ],
+  "protocol": "DB2-pretrained, calibrate on the first repetitions, predict the held-out repetitions",
+  "contains_emg": false,
+  "columns": "dataset, subject, day, rep, start (sample index), y_true, and one pred_<method> column per method -- labels only, no signal",
+  "hyperparameters": {
+    "budget": "results/budget_chosen.json",
+    "classic_gate_tau": 0.3,
+    "selected_on": "held-out DB2 subjects; nothing tuned on test"
+  },
+  "window": {
+    "length_ms": 200.0,
+    "stride_ms": 100.0
+  }
+}

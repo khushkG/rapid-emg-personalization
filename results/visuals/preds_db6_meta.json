@@ -1,0 +1,33 @@
+{
+  "mode": "db6",
+  "targets": [
+    1,
+    2,
+    6
+  ],
+  "shots": 3,
+  "seed": 0,
+  "pretrain_steps": 3000,
+  "classes": [
+    "rest",
+    "db6_movement_1",
+    "db6_movement_3",
+    "db6_movement_4",
+    "db6_movement_6",
+    "db6_movement_9",
+    "db6_movement_10",
+    "db6_movement_11"
+  ],
+  "protocol": "LOSO within DB6, calibrate day 1, predict day-1 held-out repetitions and day 5",
+  "contains_emg": false,
+  "columns": "dataset, subject, day, rep, start (sample index), y_true, and one pred_<method> column per method -- labels only, no signal",
+  "hyperparameters": {
+    "budget": "results/budget_chosen.json",
+    "classic_gate_tau": 0.3,
+    "selected_on": "held-out DB2 subjects; nothing tuned on test"
+  },
+  "window": {
+    "length_ms": 200.0,
+    "stride_ms": 100.0
+  }
+}

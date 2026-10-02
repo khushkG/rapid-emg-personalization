@@ -15,6 +15,12 @@ results/*
 !results/*_chosen.json
 !results/*_chosen_steprule.json
 !results/db3_signal_quality.csv
+# The shareable figures and the predictions they are built from. The predictions are
+# labels only -- no EMG -- so they carry no redistribution problem, and keeping them
+# is what makes every figure reproducible without storing model weights.
+!results/visuals/
+!results/visuals/**
+!results/project_page.html
 *.pt
 .DS_Store
 results/selfcheck_*

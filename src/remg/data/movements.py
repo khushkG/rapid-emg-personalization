@@ -203,16 +203,52 @@ DEFAULT_SUBSET: dict[int, str] = {
 # in hand. Nothing in the pipeline depends on the names being meaningful; they
 # appear in result tables, which is precisely why they must not be wrong.
 #
-# The hypothesis worth checking against the documentation, recorded so it is not
-# re-derived: {1, 3, 4, 6, 9, 10, 11} would be exercise-2 *local* ids, which map to
-# DB2 global {18, 20, 21, 23, 26, 27, 28} under EXERCISE_OFFSET[2] = 17. That is
-# consistent with DB6 reusing a subset of DB2's grasping exercise, and it is
-# unverified.
+# Checked against the literature, and the outcome is worth recording in full because
+# the obvious shortcut is wrong.
+#
+# The seven grasps DB6 contains are, with reasonable confidence: Large Diameter,
+# Adducted Thumb, Index Finger Extension, Medium Wrap, Writing Tripod, Power Sphere,
+# Precision Sphere. Several independent secondary sources describing DB6 give exactly
+# this set, in this order (originating with Palermo et al., IEEE ICORR 2017, which
+# introduced the database).
+#
+# What is NOT established is which id is which grasp, and two candidate orderings
+# disagree:
+#
+#   * If the ids ascend with presentation order, then 1, 3, 4, 6, 9, 10, 11 take the
+#     seven names in the order above.
+#   * Under the Feix GRASP taxonomy numbering, 3 is Medium Wrap and 4 is Adducted
+#     Thumb -- the opposite assignment for those two -- and 11 is Power Sphere rather
+#     than Precision Sphere.
+#
+# An earlier hypothesis here, that these are DB2 exercise-2 local ids mapping to
+# global {18, 20, 21, 23, 26, 27, 28}, is now *refuted*: it agrees for ids 1, 4, 9 and
+# 10 but DB2's exercise 2 contains no "Adducted thumb" at all, and it puts Medium Wrap
+# at local 5 and Precision Sphere at local 12 rather than at DB6's 6 and 11. Four
+# matches out of seven is the kind of partial agreement that looks like confirmation
+# and is not.
+#
+# So the names stay provisional. This project recorded `lateral_grasp` as id 32 (tip
+# pinch) until two published sources put it at 34, and that error came from exactly
+# this move -- adopting a plausible mapping without a source that states it. A figure
+# captioned with the wrong grasp is worse than one captioned "movement 3".
 DB6_MOVEMENT_IDS: tuple[int, ...] = (1, 3, 4, 6, 9, 10, 11)
 
 DB6_SUBSET: dict[int, str] = {0: "rest", **{i: f"db6_movement_{i}" for i in DB6_MOVEMENT_IDS}}
 
 DB6_NAMES_ARE_PROVISIONAL = True
+
+# The grasp set, citable, with no claim about which id is which.
+DB6_GRASP_SET: tuple[str, ...] = (
+    "Large Diameter", "Adducted Thumb", "Index Finger Extension", "Medium Wrap",
+    "Writing Tripod", "Power Sphere", "Precision Sphere",
+)
+DB6_GRASP_SET_SOURCE = (
+    "Palermo et al., 'Repeatability of grasp recognition for robotic hand prosthesis "
+    "control based on sEMG data', IEEE ICORR 2017 (the paper introducing DB6), as "
+    "reported in the descriptions of DB6 in the subsequent literature. The mapping "
+    "from restimulus id to grasp name is NOT established by any source consulted."
+)
 
 
 def subset_mapping(subset: dict[int, str] | None = None):
