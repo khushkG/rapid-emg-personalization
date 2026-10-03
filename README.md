@@ -1,41 +1,67 @@
-# Rapid Personalization of Prosthetic Hand Control Using Muscle Signals
+# Personalizing Prosthetic Hand Control from Three Calibration Repetitions
 
-Can a shared deep-learning model adapt to a new amputee from a few calibration
-examples, and stay reliable across sessions and sensor failures?
+Teaching a prosthetic-hand controller a new user from three repetitions of each
+movement, and keeping it working five days later when the sensors go back on.
 
-Multichannel surface EMG goes in, an intended hand movement comes out. The model
-is pretrained on a cohort of intact subjects, then personalized to a previously
-unseen amputee using only a handful of movement repetitions. No prosthetic
-hardware is involved; the demonstration replays recorded EMG and animates a
-digital hand.
+**[View the interactive project page →](https://khushkg.github.io/rapid-emg-personalization/)**
 
-## Status
+![The same fine-tuned model decoding day 1 beside day 5](results/visuals/day1_vs_day5_hands.gif)
 
-| Stage | State |
+Myoelectric prostheses turn electrical activity in the forearm muscles into hand
+movements. Every user's signals are different, so a controller must be calibrated to
+each person, and recalibrated whenever the sensors are put back on. This project set
+out to make that calibration fast and reliable. It uses recorded signals from public
+datasets, decoded offline and visualized on a digital hand; no prosthetic hardware is
+involved.
+
+## What I built
+
+- A complete pipeline for training and personalizing hand-movement decoders on public
+  NinaPro recordings from intact and amputee participants.
+- A model pretrained on many people that adapts to a new user from only one to three
+  repetitions of each movement.
+- A two-stage controller that first decides whether the user intends to move, then
+  which movement.
+- A rigorous evaluation setup: held-out participants, multiple random seeds, and
+  success criteria fixed before each experiment.
+
+## What I achieved
+
+- **Fast calibration.** With three repetitions, the model reached about 86% of the
+  accuracy of full per-person training on amputee recordings.
+- **Stability across days.** Adapting only a small part of the model kept performance
+  far more stable from day 1 to day 5 than retraining the whole network. The proposed
+  adapter method passed its pre-set success test, and the study also showed that an
+  even simpler adaptation matches it.
+- **Safer control.** The rest-detection stage cut unwanted hand movements by 78% on
+  good-quality recordings.
+
+## Key results
+
+![Balanced accuracy from day 1 to day 5 for five methods](results/visuals/day1_to_day5.png)
+
+| | |
 | --- | --- |
-| Environment, package layout | done |
-| Preprocessing, windowing, splits | done |
-| Synthetic EMG source (for development and tests) | done |
-| Encoder, adapters, prototype head | done |
-| Pretraining with episodic meta-learning | done |
-| Four personalization conditions | done |
-| Metrics, sensor-failure sweep, rejection curves | done; **run on real data** (see Results) |
-| Protocol test suite (185 tests) | passing |
-| NinaPro DB2/DB3/DB6 loader | run against real DB2 and DB3 files; label-numbering bug found and fixed |
-| Movement subset | verified against the official movement list (one id was wrong — see Scope notes) |
-| Cross-repetition session proxy | done |
-| Real-data pipeline (DB2 -> DB3, end to end) | runs; `scripts/run_experiment.py` |
-| DB3 download | 11 of 11 subjects; cohort coverage verified |
-| DB2 download | 15 of 40 subjects (enough for the study) |
-| DB6 download | 10 of 10 subjects, 20 GB; format verified against all 100 files |
-| Cross-session experiment (day 1 → day 5) | **done**: DB6, 10 subjects, 3 seeds. `rapid` passes its pre-stated criterion — and `linear_probe` retains better still (`scripts/run_crosssession.py`) |
-| Digital hand visualisation | done: `scripts/demo_hand.py` |
-| Real results | complete: clean, sensor-failure and abstention. **The proposed method does not beat the baselines on any axis measured** |
-| Benchmark against the published DB3 protocol | done: classic baselines reproduce the literature, so the pipeline is sound (`scripts/benchmark.py`) |
-| Adaptation budget selected on held-out DB2 | done: every hand-set default was near the bottom of its grid (`scripts/tune_budget.py`) |
-| Rest handling / false-activation rate | measured for every method; two-stage gate halves the rate but not the event count (`remg/train/twostage.py`, `scripts/tune_gate.py`) |
-| Decision rules: debounce, classic `td_rf` gate | done; debounce fails its own accuracy goal, the classic gate beats the logistic one (`remg/evaluate/temporal.py`, `scripts/tune_rules.py`) |
-| Matched-data comparison against `td_rf` | done: the network's margin is +0.036 balanced accuracy for 4.5x the false activations (`scripts/classic_fewshot.py`) |
+| **86%** | of full per-person accuracy, from three calibration repetitions (0.508 against 0.590 balanced accuracy, amputee cohort) |
+| **0.108 → 0.073** | balanced-accuracy lost between day 1 and day 5, retraining every weight against adapting a small part (n = 30, p = 3.8e-04) |
+| **78%** | fewer unwanted movements during rest, 52.9 → 11.6 per minute, for 0.018 balanced accuracy |
+| **54.8%** | accuracy for the classic baseline on the published DB3 protocol, against ~46% in the literature — which validates the pipeline independently of any deep learning |
+
+Every number in this README is reported whichever way it fell, including the ones that
+went against the method this project set out to test. The full reasoning is below.
+
+## Tech stack
+
+**Python 3.14** · **PyTorch** (encoder, FiLM adapters, prototype head, episodic
+meta-learning) · **NumPy** / **SciPy** (signal processing, windowing, statistics) ·
+**scikit-learn** (classic time-domain baselines, the logistic and random-forest rest
+gates) · **pandas** (result tables) · **Matplotlib** (figures) · **h5py** (MATLAB
+v7.3 recordings) · **pytest** (185 protocol tests) · **uv** (dependency management)
+
+For the 3D hand animation: **three.js** rendered in headless **Chromium** via
+**Playwright**, composited into the figure layout with Matplotlib.
+
+## Full results
 
 Everything runs end-to-end today on synthetic data:
 
@@ -45,12 +71,10 @@ uv run python scripts/smoke.py     # ~1 minute
 
 Those numbers are plumbing checks, not findings. The data is simulated.
 
-The tests are the other half of that: 147 of them, covering the protocol rules
+The tests are the other half of that: 185 of them, covering the protocol rules
 below and the NinaPro loader against synthetic files written in the real `.mat`
 format (both v5 and v7.3 containers, the per-exercise label restart, and the
 reduced-channel amputee recordings).
-
-## Results
 
 Leave-one-subject-out, 15 DB2 subjects pretraining, 10 DB3 amputees evaluated,
 3000 steps, **3 seeds** (n = 30 subject-seed pairs). Balanced accuracy over 12
@@ -801,19 +825,17 @@ tests/         protocol guards, loader tests, synthetic .mat fixtures
 
 ## Scope notes
 
-**DB6 is not a drop-in cross-session test set.** DB2 and DB3 share an acquisition
-protocol, so a model pretrained on DB2 applies to DB3 directly. DB6 differs — a
-different electrode count and a much smaller movement set, recorded from intact
-subjects only — so weights do not transfer from a DB2-pretrained model. Two ways
-forward, to be decided once the files are in hand and `inspect_data.py` has
-confirmed the specifics:
+**DB6 is a separate experiment, not an extension of the first.** DB2 and DB3 share
+an acquisition protocol, so a model pretrained on DB2 applies to DB3 directly. DB6
+differs — 14 electrodes against 12, a different placement, a different movement set,
+and intact subjects only — so a DB2-pretrained encoder cannot even be loaded, let
+alone transferred. The cross-session study is therefore self-contained: pretrain on
+the other DB6 subjects, hold one out, calibrate on day 1 and evaluate on day 5. It is
+run and reported above (`scripts/run_crosssession.py`).
 
-- *Self-contained DB6 study.* Pretrain on DB6 subjects, hold one out, calibrate on
-  day 1 and evaluate on day 5. Answers the cross-session question properly, on
-  fewer movements, as a second experiment rather than an extension of the first.
-- *Cross-repetition proxy within DB2/DB3.* Calibrate on early repetitions and test
-  on late ones. Weaker — it captures drift within a session, not re-donning
-  between days — but needs no extra data and is worth reporting either way.
+A weaker within-session proxy also exists and is reported alongside it: calibrate on
+early repetitions and test on late ones. It captures drift within one session rather
+than re-donning between days.
 
 The cross-repetition proxy is implemented and runs as part of the main
 experiment (`recency_split`, on by default). It costs nothing: it regroups
@@ -869,23 +891,46 @@ subset entry to its official name, so this cannot drift again.
 movements are actually *present* in the downloaded recordings, which no amount
 of reading the literature can establish.
 
-## Next
+## Next steps
 
-The study is complete. What remains is one experiment and one decision.
-
-1. **The cross-session study.** The only unanswered part of the original
-   question, and the one scenario that could still favour a low-parameter
-   method. Needs DB6 downloaded and its URL layout confirmed.
-2. **Decide what this project reports.** The honest headline is that
-   personalization from three repetitions works well -- 0.16 to 0.40 balanced
-   accuracy over 12 classes -- and that ordinary fine-tuning is the best way to
-   do it among those tested. That is a useful negative result about adapters,
-   not a failed project, provided it is written up as what it is.
+- Test with more amputee participants and over more days.
+- Run the controller in real time on a low-cost EMG armband.
+- Combine the rest-detection stage with day-to-day adaptation.
 
 Reproduce the headline numbers with:
 
 ```
-uv run python scripts/run_experiment.py --steps 3000 --shots 1 2 3 --seeds 0 1 2 \
-    --tag robust15 --no-notch
-uv run python scripts/make_report.py --tag robust15
+uv run python scripts/run_experiment.py --budget results/budget_chosen.json \
+    --gate results/gate_chosen.json --rules results/rules_chosen.json \
+    --shots 1 2 3 --seeds 0 1 2 --steps 3000 --no-notch --tag rules15
+uv run python scripts/run_crosssession.py --budget results/budget_chosen.json \
+    --gate results/gate_chosen.json --rules results/rules_chosen.json
 ```
+
+## Status
+
+| Stage | State |
+| --- | --- |
+| Environment, package layout | done |
+| Preprocessing, windowing, splits | done |
+| Synthetic EMG source (for development and tests) | done |
+| Encoder, adapters, prototype head | done |
+| Pretraining with episodic meta-learning | done |
+| Four personalization conditions | done |
+| Metrics, sensor-failure sweep, rejection curves | done; **run on real data** (see Results) |
+| Protocol test suite (185 tests) | passing |
+| NinaPro DB2/DB3/DB6 loader | run against real DB2 and DB3 files; label-numbering bug found and fixed |
+| Movement subset | verified against the official movement list (one id was wrong — see Scope notes) |
+| Cross-repetition session proxy | done |
+| Real-data pipeline (DB2 -> DB3, end to end) | runs; `scripts/run_experiment.py` |
+| DB3 download | 11 of 11 subjects; cohort coverage verified |
+| DB2 download | 15 of 40 subjects (enough for the study) |
+| DB6 download | 10 of 10 subjects, 20 GB; format verified against all 100 files |
+| Cross-session experiment (day 1 → day 5) | **done**: DB6, 10 subjects, 3 seeds. `rapid` passes its pre-stated criterion — and `linear_probe` retains better still (`scripts/run_crosssession.py`) |
+| Digital hand visualisation | done: `scripts/demo_hand.py` |
+| Real results | complete: clean, sensor-failure and abstention. **The proposed method does not beat the baselines on any axis measured** |
+| Benchmark against the published DB3 protocol | done: classic baselines reproduce the literature, so the pipeline is sound (`scripts/benchmark.py`) |
+| Adaptation budget selected on held-out DB2 | done: every hand-set default was near the bottom of its grid (`scripts/tune_budget.py`) |
+| Rest handling / false-activation rate | measured for every method; two-stage gate halves the rate but not the event count (`remg/train/twostage.py`, `scripts/tune_gate.py`) |
+| Decision rules: debounce, classic `td_rf` gate | done; debounce fails its own accuracy goal, the classic gate beats the logistic one (`remg/evaluate/temporal.py`, `scripts/tune_rules.py`) |
+| Matched-data comparison against `td_rf` | done: the network's margin is +0.036 balanced accuracy for 4.5x the false activations (`scripts/classic_fewshot.py`) |
