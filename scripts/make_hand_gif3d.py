@@ -94,8 +94,8 @@ def compose(frame: int, left: dict, right: dict, imgs: dict, fps: int, windows: 
             fontsize=12.5, color=INK_2, va="center")
 
     for k, (side, title, sub) in enumerate((
-            (left, "Day 1", "same session as the calibration"),
-            (right, "Day 5", "sensors taken off and put back on"))):
+            (left, "Day 1", "same session as calibration"),
+            (right, "Day 5", "sensors put back on"))):
         x0 = 0.042 + k * 0.479
         cw, ch, y0 = 0.437, 0.600, 0.190
         bg.add_patch(FancyBboxPatch((x0, y0), cw, ch,
@@ -104,12 +104,14 @@ def compose(frame: int, left: dict, right: dict, imgs: dict, fps: int, windows: 
                                     facecolor=CARD, zorder=1))
         bg.text(x0 + 0.026, y0 + ch - 0.050, title, fontsize=17, color=INK,
                 va="center", zorder=3)
-        bg.text(x0 + 0.026, y0 + ch - 0.088, sub, fontsize=11, color=INK_3,
+        bg.text(x0 + 0.026, y0 + ch - 0.088, sub, fontsize=10.5, color=INK_3,
                 va="center", zorder=3)
         bg.text(x0 + cw - 0.026, y0 + ch - 0.050, f"{side['acc']:.3f}", fontsize=17,
                 color=INK, va="center", ha="right", zorder=3)
-        bg.text(x0 + cw - 0.026, y0 + ch - 0.088, "balanced accuracy", fontsize=10.5,
-                color=INK_3, va="center", ha="right", zorder=3)
+        # Spelled out: the figure above it is a 10-second clip, and this number is not
+        # the clip's score -- it is the whole day's.
+        bg.text(x0 + cw - 0.026, y0 + ch - 0.088, "balanced accuracy, whole day",
+                fontsize=10.5, color=INK_3, va="center", ha="right", zorder=3)
 
         t_now, p_now = side["true"][w0], side["pred"][w0]
         ok = t_now == p_now

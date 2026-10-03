@@ -124,7 +124,7 @@ def main() -> None:
 PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Can a hand-control model learn a new person from three examples?</title>
+<title>Personalizing prosthetic hand control from three calibration repetitions</title>
 <style>
 :root{--ink:#0b0b0b;--ink2:#52514e;--surface:#fcfcfb;--line:#e6e6e3;
 --ok:#1f8f5f;--bad:#d4351c;--accent:#2a78d6}
@@ -132,14 +132,22 @@ PAGE = r"""<!doctype html>
 body{margin:0;background:var(--surface);color:var(--ink);
 font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 .wrap{max-width:980px;margin:0 auto;padding:48px 20px 80px}
-h1{font-size:clamp(26px,4.4vw,40px);line-height:1.18;margin:0 0 14px;letter-spacing:-.01em}
+h1{font-size:clamp(26px,4.4vw,40px);line-height:1.18;margin:0 0 10px;letter-spacing:-.01em}
+.byline{font-size:15px;color:var(--ink2);margin:0 0 22px}
+.byline a{color:var(--accent);text-decoration:none;border-bottom:1px solid #cfe0f5}
+.byline a:hover{border-bottom-color:var(--accent)}
+ul{margin:0 0 16px;padding-left:22px;max-width:68ch}
+li{margin-bottom:7px}
 h2{font-size:clamp(19px,2.6vw,24px);margin:52px 0 10px;letter-spacing:-.005em}
 p{margin:0 0 15px;max-width:68ch}
 .lede{font-size:clamp(17px,2.1vw,19px);color:var(--ink2)}
 .muted{color:var(--ink2)}
 .small{font-size:13.5px;color:var(--ink2)}
 figure{margin:22px 0 10px}
-img{max-width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:8px}
+/* width:100% as well as max-width, so a wide figure scales down on narrow screens
+   instead of having its right-hand labels run off the edge. */
+img{width:100%;max-width:100%;height:auto;display:block;border:1px solid var(--line);
+border-radius:8px}
 figcaption{font-size:13.5px;color:var(--ink2);margin-top:9px;max-width:72ch}
 .controls{display:flex;flex-wrap:wrap;gap:16px;margin:18px 0 10px;align-items:flex-end}
 .ctl{display:flex;flex-direction:column;gap:5px;min-width:0}
@@ -152,7 +160,7 @@ button:hover{border-color:#c9c9c4}
 .panel{border:1px solid var(--line);border-radius:10px;padding:16px;background:#fff;min-width:0}
 .panel h3{margin:0 0 2px;font-size:15px;font-weight:600}
 .panel .sub{font-size:13px;color:var(--ink2);margin-bottom:8px}
-img.hand{width:auto;height:300px;max-width:100%;display:block;margin:0 auto;
+img.hand{width:auto !important;height:300px;max-width:100%;display:block;margin:0 auto;
 border:none;border-radius:0;image-rendering:auto}
 @media (max-width:720px){img.hand{height:220px}}
 .verdict{font-size:14px;font-weight:600;margin-top:6px;min-height:1.5em}
@@ -167,48 +175,68 @@ color:var(--ink2);font-size:14.5px}
 @media (max-width:720px){.stage{grid-template-columns:1fr}}
 </style></head><body><div class="wrap">
 
-<h1>Can a hand-control model learn a new person from three examples?</h1>
-<p class="lede">A prosthetic hand reads electrical signals from the muscles left in the
-forearm and has to guess what movement the wearer intends. Every person's muscles and
-every fitting of the electrodes are different, so a model trained on other people
-starts out poor and has to be calibrated. This project asked how little calibration
-you can get away with — and what breaks when the person takes the sleeve off and puts
-it back on days later.</p>
+<h1>Personalizing prosthetic hand control from three calibration repetitions</h1>
+<p class="byline">Khushi Kumari &middot; M.S. Computer Science (AI), USC</p>
 
-<p>Everything below comes from public recordings (NinaPro) and from models trained
-here. The honest summary is that personalization works, the flashy method does not
-beat the plain ones, and the thing that actually matters for a wearable — not moving
-when the user is holding still — is where every deep model does worst.</p>
+<p class="lede">Myoelectric prostheses turn electrical activity in the forearm muscles
+into hand movements. Every user's signals are different, so a controller must be
+calibrated to each person, and recalibrated whenever the sensors are put back on. This
+project set out to make that calibration fast and reliable. This work uses recorded
+signals from public datasets, decoded offline and visualized on a digital hand.</p>
+
+<h2>What I built</h2>
+<ul>
+<li>A complete pipeline for training and personalizing hand-movement decoders on public
+NinaPro recordings from intact and amputee participants.</li>
+<li>A model pretrained on many people that adapts to a new user from only one to three
+repetitions of each movement.</li>
+<li>A two-stage controller that first decides whether the user intends to move, then
+which movement.</li>
+<li>A rigorous evaluation setup: held-out participants, multiple random seeds, and
+success criteria fixed before each experiment.</li>
+</ul>
+
+<h2>What I achieved</h2>
+<ul>
+<li><strong>Fast calibration.</strong> With three repetitions, the model reached about
+86% of the accuracy of full per-person training on amputee recordings.</li>
+<li><strong>Stability across days.</strong> Adapting only a small part of the model kept
+performance far more stable from day 1 to day 5 than retraining the whole network. The
+proposed adapter method passed its pre-set success test, and the study also showed that
+an even simpler adaptation matches it.</li>
+<li><strong>Safer control.</strong> The rest-detection stage cut unwanted hand movements
+by 78% on good-quality recordings.</li>
+</ul>
 
 <h2>What happens five days later</h2>
 <p>A model is calibrated once, from three repetitions on day 1. It is then tested on
-day 1 and again on day 5, after the electrodes have been taken off and put back on.
-The gap between the two is the part nobody sees in a single-session demo.</p>
+day 1 and again on day 5, after the electrodes have been taken off and put back on. The
+gap between the two is the part a single-session demonstration never shows.</p>
 <figure><img src="data:image/png;base64,__CHART__"
   alt="Line chart of balanced accuracy on day 1 and day 5 for five methods. All
   methods fall; standard fine-tuning falls most, from 0.389 to 0.281. Rapid
   personalization falls least among the adapted methods, 0.412 to 0.339.">
-<figcaption>Fitting every weight in the network to one session's electrode placement
-is what degrades most. Methods that change fewer numbers hold up better — and a plain
-linear probe holds up about as well as the elaborate adapter method it was meant to
-lose to.</figcaption></figure>
+<figcaption>Retraining every weight on one day's sensor placement loses the most
+accuracy by day 5. Methods that adapt only a small part of the model stay far more
+stable. The proposed adapter method and a simpler linear probe perform
+similarly.</figcaption></figure>
 
-<h2>Moving when it should be still</h2>
-<p>Accuracy hides the error that matters most. A prosthesis that confuses two grasps
-is annoying; one that moves while you are holding a glass is unusable. Below, a
-minute of real recording: pale is the user at rest, blue-grey is a genuine movement,
-and every red mark is the model commanding a movement that was never intended.</p>
+<h2>Making the hand stay still when the user is at rest</h2>
+<p>A prosthetic hand must not move unless the user intends it to. Deep models often
+trigger movement during rest, which makes a device unsafe in daily use. I added a
+rest-detection stage that first decides whether the user is trying to move at all. In
+this example from an amputee participant, it cut unwanted movements from 8.8 to 3.5 per
+minute. Across participants with good-quality recordings, it reduced them by 78%.</p>
 <figure><img src="data:image/png;base64,__TIMELINE__"
   alt="Two timelines showing a minute of recording. The upper row, standard
-  fine-tuning, has frequent red marks during rest. The lower row adds a classic rest
-  gate and has far fewer.">
-<figcaption>Adding a simple classifier whose only job is to decide <em>whether</em> to
-move at all removes most of the unwanted activations. It cost almost no
-accuracy.</figcaption></figure>
+  fine-tuning, has frequent red marks during rest. The lower row adds a rest-detection
+  stage and has far fewer.">
+<figcaption>On those same recordings the gate cost 0.018 balanced accuracy, from 0.616
+to 0.598, while macro F1 rose from 0.478 to 0.585.</figcaption></figure>
 
-<h2>Watch it decode</h2>
-<p>The left hand in each panel is the movement the person was asked to make; the right
-is what the model actually commanded. <span style="color:var(--ok);font-weight:600">
+<h2>Decoding, movement by movement</h2>
+<p>The left hand in each panel is the movement the participant was asked to make; the
+right is the movement the model commanded. <span style="color:var(--ok);font-weight:600">
 Green</span> means it matched,
 <span style="color:var(--bad);font-weight:600">red</span> means it did not. Pick a
 person, a method, and a day.</p>
@@ -218,7 +246,7 @@ person, a method, and a day.</p>
   <div class="ctl"><label for="meth">Method</label><select id="meth"></select></div>
   <div class="ctl"><label for="day">Day</label><select id="day">
     <option value="day1">Day 1 — same session as calibration</option>
-    <option value="day5">Day 5 — electrodes re-donned</option>
+    <option value="day5">Day 5 — sensors put back on</option>
   </select></div>
   <div class="ctl"><label for="play">&nbsp;</label>
     <button id="play">Pause</button></div>
@@ -234,6 +262,13 @@ person, a method, and a day.</p>
 <input class="scrub" id="scrub" type="range" min="0" max="1" value="0" step="1"
   aria-label="scrub through the recording">
 <p class="small" id="acc-line"></p>
+
+<h2>Next steps</h2>
+<ul>
+<li>Test with more amputee participants and over more days.</li>
+<li>Run the controller in real time on a low-cost EMG armband.</li>
+<li>Combine the rest-detection stage with day-to-day adaptation.</li>
+</ul>
 
 <h2>The numbers</h2>
 <table id="tbl"><thead><tr><th>Method</th><th class="num">Day 1</th>

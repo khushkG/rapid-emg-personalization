@@ -574,7 +574,16 @@ numbers, from which no signal can be reconstructed.
 | `day1_to_day5.png` | the cross-session result: five methods, day 1 to day 5, with 95% CIs |
 | `rest_timeline.png` | a minute of recording with every false activation marked, gate on and off |
 | `day1_vs_day5_hands.gif` | the same fine-tuned model decoding day 1 beside day 5 |
-| `preds_db6.csv`, `preds_db3.csv` | the per-window predictions every figure is built from |
+| `preds_db6.csv`, `preds_db3.csv` | the per-window predictions every figure is built from -- **not tracked in git** |
+
+The two prediction tables are kept out of git: they are a few megabytes, they are
+regenerable, and their `y_true` column is NinaPro's own annotation, which this project
+cites but has no licence to redistribute in bulk. Regenerate them with:
+
+```
+uv run python scripts/dump_predictions.py --mode db6 --targets 1 2 6 --shots 3 --seed 0
+uv run python scripts/dump_predictions.py --mode db3 --targets 3  --shots 3 --seed 0
+```
 
 The animation uses a rendered 3D hand (three.js in headless Chromium) rather than a
 drawing. A 2D hand was tried first and abandoned: a closed hand loses its fingers

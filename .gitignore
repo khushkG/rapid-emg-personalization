@@ -20,6 +20,11 @@ results/*
 # is what makes every figure reproducible without storing model weights.
 !results/visuals/
 !results/visuals/**
+# The per-window prediction tables are large and regenerable, and their y_true column
+# is NinaPro's own annotation -- which this project cites but has no licence to
+# redistribute in bulk. Regenerate with scripts/dump_predictions.py.
+results/visuals/preds_db6.csv
+results/visuals/preds_db3.csv
 !results/project_page.html
 *.pt
 # Vendored third-party render assets and intermediates. The GLB, three.js and the

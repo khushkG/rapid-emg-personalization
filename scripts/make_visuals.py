@@ -211,30 +211,28 @@ def figure_timeline(preds: Path, out: Path, seconds: float = 60.0,
         # the red marks, which are the one thing the figure exists to show.
         ax.text(0.0, 1.62, lab, transform=ax.transAxes, fontsize=13,
                 color=INK, va="top")
-        ax.text(1.0, 1.62, f"{rate:.1f} false activations per minute of rest"
-                           f"   ({n_events} in this {seconds:.0f} s)",
+        ax.text(1.0, 1.62, f"{rate:.1f} false activations per minute of rest",
                 transform=ax.transAxes, fontsize=11.5, color="#a32b17",
                 va="top", ha="right")
     axes[-1].set_xlabel("seconds", fontsize=11.5, color=INK_2)
     axes[-1].tick_params(axis="x", labelcolor=INK_2, labelsize=10.5)
     axes[-1].set_xlim(0, t[-1] + stride_ms / 1000.0)
 
-    fig.suptitle("Where the hand moves when the user is holding still",
-                 fontsize=19, color=INK, x=0.035, ha="left", y=0.985,
-                 fontweight="medium")
-    fig.text(0.035, 0.905,
-             f"NinaPro DB3 amputee S{subject} · 3 calibration repetitions · "
+    fig.suptitle("Unwanted movement while the user is at rest",
+                 fontsize=19, color=INK, x=0.045, ha="left", y=0.985)
+    fig.text(0.045, 0.905,
+             f"NinaPro DB3 amputee participant · 3 calibration repetitions · "
              f"{seconds:.0f} s of held-out recording",
              fontsize=11, color=INK_2, va="top")
-    fig.text(0.035, 0.862,
+    fig.text(0.045, 0.862,
              "pale = user at rest   ·   blue-grey = a real movement   ·   "
              "red = the hand moved when it should have been still",
              fontsize=10.5, color=INK_2, va="top")
-    fig.text(0.035, 0.035,
-             "The gate removes most unwanted activations and shortens the rest. No EMG "
-             "is shown: these are the model's own decisions.",
+    fig.text(0.045, 0.035, "The gate removes most unwanted activations.",
              fontsize=11.5, color=INK)
-    fig.subplots_adjust(left=0.035, right=0.985, top=0.70, bottom=0.17, hspace=0.95)
+    # Generous side margins: at 9 px of slack the right-hand labels read as clipped
+    # once the image is scaled down to the page width.
+    fig.subplots_adjust(left=0.045, right=0.955, top=0.70, bottom=0.17, hspace=0.95)
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, facecolor=SURFACE)
     plt.close(fig)
